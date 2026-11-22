@@ -7,7 +7,7 @@ description: Use when the user wants to set up, run, change or extend justcode (
 
 ## 1. What it is
 
-The plugin teaches Claude to drive **justcode**: shell commands (zsh + git + curl + jq) that run a whole workflow step with one call. Every step prints one line: `✓` done, `•` skipped, `✗` failed. Every command has `-n` (dry run: all reads, zero writes) and `-h`.
+The plugin teaches Claude to drive **justcode**: shell commands (zsh, git and jq) that run a whole workflow step with one call. Every step prints one line: `✓` done, `•` skipped, `✗` failed. Every command has `-n` (dry run: all reads, zero writes) and `-h`.
 
 | command | does |
 |---|---|
@@ -92,7 +92,7 @@ When the user asks for a command justcode does not have, offer to create it as a
 4. `justcode run <name> -n` and show the output.
 5. Only then offer the real run, with the approval rules in §5.
 
-Contract: `-n` and `-h`; ✓/•/✗ lines; exit 1 if any step failed; safe to re-run; lib API only (`df_http`, `df_secret`, `df_wait_for_host`, `df_fill`, `df_step_off`, `df_hook`); no `curl`, `wget`, `eval` or direct secret reads; English messages. Built-in names cannot be shadowed. A team command wins over a personal one only when trusted.
+Contract: `-n` and `-h`; ✓/•/✗ lines; exit 1 if any step failed; safe to re-run; lib API only (`df_http`, `df_secret`, `df_wait_for_host`, `df_fill`, `df_step_off`, `df_hook`); no raw network calls, no dynamic code evaluation, no direct secret reads (`justcode command check` enforces this); English messages. Built-in names cannot be shadowed. A team command wins over a personal one only when trusted.
 
 **Before writing a team command, always tell the user that every teammate has to review it and run `justcode trust` before it runs for them.**
 
@@ -118,8 +118,8 @@ Contract: `-n` and `-h`; ✓/•/✗ lines; exit 1 if any step failed; safe to r
 ## 7. Contract and safety rules
 
 - Config files are zsh source loaded at the lib's top level. Repo layers and team commands only when trusted; untrusted → one `• <path> is not trusted; review it, then run: justcode trust` line and continue without it.
-- Hooks only from trusted layers; run with `zsh -c` in the repo root. `JUSTCODE_SET` refuses hooks, commands, arrays and maps. No `eval` of config values anywhere.
-- Secrets: only through `df_secret <name>`; never in a process argument list (curl gets headers on stdin); never printed, logged or written. `justcode config` shows only entry names; `justcode doctor` prints the store command, never asks for the value.
+- Hooks only from trusted layers; each runs in its own shell in the repo root. `JUSTCODE_SET` refuses hooks, commands, arrays and maps. Config values are never evaluated as code.
+- Secrets: only through `df_secret <name>`; never in a process argument list (HTTP headers go on stdin); never printed, logged or written. `justcode config` shows only entry names; `justcode doctor` prints the store command, never asks for the value.
 - Dry run (`-n`) does every read and zero writes; each write it would make prints a `[dry-run]` line.
 - Fail closed: a failed tracker search, an unknown account (`CODE_USER` mismatch) or an unreachable host stops the command before any write.
 - `code_auto_merge` never merges: when the PR would merge immediately or the state is unknown it skips (`•`).

@@ -19,7 +19,7 @@ Remotes understood: `https://host[:port]/owner/name(.git)`, `git@host:owner/name
 ## GitHub (`github`)
 - REST v3 for everything, GraphQL for draft toggles and auto-merge (`enablePullRequestAutoMerge`).
 - API URL: `https://api.github.com`; GitHub Enterprise: `https://<host>/api/v3`.
-- Token: fine-grained token with Pull requests read/write and Contents read, or a classic token with `repo`. `CODE_TOKEN_SECRET=gh` reuses `gh auth token`.
+- Token: fine-grained token with Pull requests read/write and Contents read, or a classic token with `repo`. `CODE_TOKEN_SECRET=gh` reuses the GitHub CLI login.
 - Auto-merge needs "Allow auto-merge" in the repository settings; when the PR is already mergeable GitHub would merge at once, so justcode returns 2 and leaves it.
 
 ## GitLab (`gitlab`)
