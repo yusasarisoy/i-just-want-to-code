@@ -99,6 +99,17 @@ Ask Claude:
 
 Claude detects your remote, branch naming and tools, asks at most three rounds of clickable questions, shows the plan and the full config, and writes nothing until you say yes. Then it runs `justcode doctor` and every command with `-n` so you see it work.
 
+### Example prompts
+
+| Ask Claude | What happens |
+|---|---|
+| "set up justcode for this repo" | Detects your stack, asks up to three rounds of questions, shows the config, writes it on your yes, then runs `justcode doctor` |
+| "ship this branch as a draft, reviewer bob, dry run first" | Runs `ship -n` and shows every planned step; runs `ship` only after you approve |
+| "log 9-10 today on ABC-123" | Runs `tlog -n ABC-123 9-10`, checks for overlaps, then logs it on your yes |
+| "how many hours am I missing this week?" | Runs `tcheck` and lists the days under your daily target |
+| "create the tickets in draft.md as Tasks" | Runs `ticket -n -t Task draft.md`, shows each ticket, creates them on your yes |
+| "add a command that opens a deploy preview" | Creates a custom command skeleton with `-n` and `-h`, checks it, and runs it as a dry run |
+
 ## 🛠️ Configure
 
 Three ways, pick one:
