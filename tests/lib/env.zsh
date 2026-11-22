@@ -1,7 +1,7 @@
 # Sandbox for persona tests: temp HOME, shims first on PATH, a mock server,
 # a bare "origin" repo and a work clone. Nothing outside the temp dir is touched.
 TESTS=${${(%):-%x}:A:h:h}
-RUNTIME=$TESTS/../skills/i-just-want-to-code/runtime
+RUNTIME=$TESTS/../runtime
 RUNTIME=${RUNTIME:A}
 source $TESTS/lib/assert.zsh
 

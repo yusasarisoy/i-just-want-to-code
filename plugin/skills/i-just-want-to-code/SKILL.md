@@ -7,7 +7,7 @@ description: Use when the user wants to set up, run, change or extend justcode (
 
 ## 1. What it is
 
-The plugin installs **justcode**: shell commands (zsh + git + curl + jq) that run a whole workflow step with one call. Every step prints one line: `✓` done, `•` skipped, `✗` failed. Every command has `-n` (dry run: all reads, zero writes) and `-h`.
+The plugin teaches Claude to drive **justcode**: shell commands (zsh + git + curl + jq) that run a whole workflow step with one call. Every step prints one line: `✓` done, `•` skipped, `✗` failed. Every command has `-n` (dry run: all reads, zero writes) and `-h`.
 
 | command | does |
 |---|---|
@@ -59,7 +59,7 @@ Example round 1:
 Before writing anything show, in one message: the files to create or change; the full resulting config, **personal and team layers separately**, with a comment per key; what each step does on their stack (e.g. "ship: push → GitHub PR → reviewers bob → Jira ABC-123 to In Review → Tempo 1h → Slack"). Then one yes/no question.
 
 ### 2.4 Write on approval
-1. `zsh skills/i-just-want-to-code/runtime/install.sh -n`, then without `-n` (copies runtime to `~/.local/share/justcode`, links commands into `~/.local/bin`, asks before overwriting).
+1. If `command -v justcode` finds nothing, the runtime is not installed yet. The plugin ships only this skill; the runtime lives in the project repository. Point the user to the install section, https://github.com/yusasarisoy/i-just-want-to-code#-install, and wait until `justcode version` works. Do not download or run an installer yourself.
 2. Write the config files. Personal keys (`*_SECRET`, `CODE_USER`, `TRACKER_USER`, `TIME_USER`, `REPO_DIR`) never go into `.justcode`.
 3. For `.justcode.local`, add it to `.gitignore`.
 
@@ -81,7 +81,7 @@ If a trusted or untrusted `.justcode` is already in the repo: ask only for perso
 ## 3. Adding a tool that has no provider
 
 1. Read the contract in the matching references file (`code-hosts.md`, `trackers.md`, `time-tracking.md`, `distribution.md`, `messages.md`, `network.md`).
-2. Write `skills/i-just-want-to-code/runtime/providers/<layer>/<tool>.zsh`: only the contract functions plus `<layer>_doctor`; network through `df_http`, secrets through `df_secret`; unsupported capabilities call `df_unsupported` and return 3.
+2. In a clone of the project repository, write `runtime/providers/<layer>/<tool>.zsh`: only the contract functions plus `<layer>_doctor`; network through `df_http`, secrets through `df_secret`; unsupported capabilities call `df_unsupported` and return 3.
 3. If the user wants to contribute it: add routes to `tests/mock/server.py` and a persona test in `tests/personas/`.
 4. Run `zsh tests/run.zsh` and `scripts/leakcheck.sh`; then `justcode doctor` and the commands with `-n`.
 

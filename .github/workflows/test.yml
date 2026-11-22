@@ -24,7 +24,7 @@ jobs:
 
       - name: Syntax check
         run: |
-          rt=skills/i-just-want-to-code/runtime
+          rt=runtime
           for f in $rt/bin/* $rt/lib/*.zsh $rt/providers/*/*.zsh $rt/install.sh tests/run.zsh; do zsh -n "$f" || exit 1; done
 
       - name: Tests

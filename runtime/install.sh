@@ -8,7 +8,7 @@ src=${0:A:h}
 prefix=${JUSTCODE_PREFIX:-$HOME/.local}
 share=$prefix/share/justcode bindir=$prefix/bin
 personal=${JUSTCODE_CONFIG_DIR:-$HOME/.config/justcode}/commands
-builtins=(ship tpull tlog tcheck ticket build vpn justcode justcode-post)
+reserved=(ship tpull tlog tcheck ticket build vpn justcode justcode-post)  # not "builtins": zsh reserves that name
 yes=0 dry=0
 for a; do
   case $a in -y) yes=1 ;; -n) dry=1 ;; *) print -r -- "usage: install.sh [-y] [-n]"; exit 1 ;; esac
@@ -23,10 +23,11 @@ fi
 run rm -rf $share
 run mkdir -p $share $bindir
 run cp -R $src/. $share/
-[[ -d $src/../references ]] && run cp -R $src/../references $share/docs
-if [[ -d $src/../../../tests/unit ]]; then
+refs=$src/../plugin/skills/i-just-want-to-code/references
+[[ -d $refs ]] && run cp -R $refs $share/docs
+if [[ -d $src/../tests/unit ]]; then
   run mkdir -p $share/selftest
-  run cp $src/../../../tests/unit/*.zsh $src/../../../tests/lib/assert.zsh $share/selftest/
+  run cp $src/../tests/unit/*.zsh $src/../tests/lib/assert.zsh $share/selftest/
 fi
 print -r -- "✓ runtime in $share"
 
@@ -44,7 +45,7 @@ link() {  # link <source> <name>
 }
 for f in $src/bin/*(N); do link $share/bin/${f:t} ${f:t}; done
 for f in $personal/*(N.); do
-  (( ${builtins[(Ie)${f:t}]} )) && { print -r -- "✗ $f shadows a built-in command; not linked"; continue }
+  (( ${reserved[(Ie)${f:t}]} )) && { print -r -- "✗ $f shadows a built-in command; not linked"; continue }
   chmod +x $f 2>/dev/null
   link $f ${f:t}
 done

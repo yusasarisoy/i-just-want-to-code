@@ -69,7 +69,9 @@ Every command takes `-n` (dry run) and `-h` (help).
 
 ## 📥 Install
 
-**Claude Code**
+Two parts: the **plugin** (the skill that teaches Claude justcode) and the **runtime** (the shell commands). Needs `zsh`, `git`, `curl` and `jq`. macOS and Linux (WSL works too).
+
+**1. Plugin, in Claude Code**
 
 ```text
 /plugin marketplace add yusasarisoy/i-just-want-to-code
@@ -78,7 +80,16 @@ Every command takes `-n` (dry run) and `-h` (help).
 
 **Claude app:** from the plugin directory, once i-just-want-to-code is listed there.
 
-Needs `zsh`, `git`, `curl` and `jq`. macOS and Linux (WSL works too).
+**2. Runtime.** Clone the repo, read `runtime/install.sh` if you like, then run it (`-n` first shows what it would do):
+
+```bash
+git clone https://github.com/yusasarisoy/i-just-want-to-code.git
+cd i-just-want-to-code
+zsh runtime/install.sh -n
+zsh runtime/install.sh
+```
+
+It copies the runtime to `~/.local/share/justcode`, links the commands into `~/.local/bin` and asks before overwriting anything. To update: `git pull`, then run it again.
 
 ## ⚡ Quick start
 
@@ -94,7 +105,7 @@ Three ways, pick one:
 
 1. **Ask Claude** to set up justcode (or to change one thing: "ship should post to Teams").
 2. **`justcode setup`** in a terminal: the same questions without Claude. `justcode setup messages` re-runs one section; `--layer team` writes the shared repo file; `-n` shows the diff only.
-3. **`justcode edit global|team|local`** opens the file in `$EDITOR`. Every key is in [`references/config.md`](skills/i-just-want-to-code/references/config.md).
+3. **`justcode edit global|team|local`** opens the file in `$EDITOR`. Every key is in [`references/config.md`](plugin/skills/i-just-want-to-code/references/config.md).
 
 - `justcode config` shows every effective value and which file it came from.
 - `justcode trust` reviews and trusts the repo's `.justcode`, `.justcode.local` and team commands.
@@ -149,7 +160,7 @@ The core of each command stays on: `ship` always checks the account, pushes and 
 | Time | Tempo Cloud · Tempo DC · Toggl Track · Clockify | none |
 | Build | TestFlight · Google Play | any command (e.g. Firebase App Distribution) · none |
 | Messages | clipboard (rich) · Slack · Microsoft Teams · webhook | none |
-| VPN | any client with a CLI or an app | presets in [`network.md`](skills/i-just-want-to-code/references/network.md) |
+| VPN | any client with a CLI or an app | presets in [`network.md`](plugin/skills/i-just-want-to-code/references/network.md) |
 
 Not listed? Ask Claude to add a provider, or write one yourself (below).
 
@@ -167,8 +178,8 @@ Personal commands live in `~/.config/justcode/commands/`; team commands in `<rep
 
 ## 🤲 Contributing a provider
 
-1. Read the contract in `skills/i-just-want-to-code/references/<layer>.md` (code-hosts, trackers, time-tracking, distribution, messages).
-2. Add `skills/i-just-want-to-code/runtime/providers/<layer>/<tool>.zsh`: only the contract functions plus `<layer>_doctor`; network via `df_http`, secrets via `df_secret`; unsupported → return 3.
+1. Read the contract in `plugin/skills/i-just-want-to-code/references/<layer>.md` (code-hosts, trackers, time-tracking, distribution, messages).
+2. Add `runtime/providers/<layer>/<tool>.zsh`: only the contract functions plus `<layer>_doctor`; network via `df_http`, secrets via `df_secret`; unsupported → return 3.
 3. Add routes to `tests/mock/server.py` and a persona in `tests/personas/`.
 4. Run the checks:
 

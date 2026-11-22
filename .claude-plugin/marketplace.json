@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "i-just-want-to-code",
-      "source": "./",
+      "source": "./plugin",
       "description": "Ship, pull, log time, file tickets, build and distribute with one command per step; configurable for any code host, tracker, time tracker and chat.",
       "version": "0.2.0"
     }

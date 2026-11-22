@@ -2,7 +2,7 @@
 # Pure string helpers: status map, ticket keys, templates, separators, remotes.
 HERE=${0:A:h}
 source $HERE/../lib/assert.zsh 2>/dev/null || source $HERE/assert.zsh
-DF_ROOT=${JUSTCODE_ROOT:-$HERE/../../skills/i-just-want-to-code/runtime}
+DF_ROOT=${JUSTCODE_ROOT:-$HERE/../../runtime}
 export HOME=$(mktemp -d "${TMPDIR:-/tmp}/justcode-unit.XXXXXX"); cd $HOME
 source $DF_ROOT/lib/justcode-lib.zsh
 

@@ -247,7 +247,7 @@ WantedBy=default.target"
 # ---------------------------------------------------------------- selfcheck
 cmd_selfcheck() {
   local dir f fails=0
-  for dir in $DF_ROOT/selftest ${DF_ROOT:h:h:h}/tests/unit; do [[ -d $dir ]] && break; done
+  for dir in $DF_ROOT/selftest ${DF_ROOT:h}/tests/unit; do [[ -d $dir ]] && break; done
   [[ -d $dir ]] || df_die "no unit tests shipped with this runtime"
   for f in $dir/*.zsh(N); do
     JUSTCODE_ROOT=$DF_ROOT zsh $f >/dev/null 2>&1 && df_ok "${f:t}" || { df_fail "${f:t}"; fails=1 }

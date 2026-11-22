@@ -60,7 +60,7 @@ typeset -ga DF_NEW_ORDER
 
 _sa_help() {
   local f
-  for f in $DF_ROOT/docs/config.md $DF_ROOT/../references/config.md; do
+  for f in $DF_ROOT/docs/config.md $DF_ROOT/../plugin/skills/i-just-want-to-code/references/config.md; do
     [[ -r $f ]] || continue
     local line=$(grep -m1 -F "| \`$1\` |" $f)
     [[ -n $line ]] && { line=${line%|*}; print -r -- "  ${${line##*|}## }"; return }

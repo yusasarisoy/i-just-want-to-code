@@ -3,7 +3,7 @@
 # Each case runs in a fresh zsh so the lib's top-level loader runs again.
 HERE=${0:A:h}
 source $HERE/../lib/assert.zsh 2>/dev/null || source $HERE/assert.zsh
-DF_ROOT=${JUSTCODE_ROOT:-$HERE/../../skills/i-just-want-to-code/runtime}
+DF_ROOT=${JUSTCODE_ROOT:-$HERE/../../runtime}
 DF_ROOT=${DF_ROOT:A}
 T=$(mktemp -d "${TMPDIR:-/tmp}/justcode-unit.XXXXXX")
 export HOME=$T/home GIT_CONFIG_GLOBAL=$T/gitconfig GIT_CONFIG_NOSYSTEM=1
