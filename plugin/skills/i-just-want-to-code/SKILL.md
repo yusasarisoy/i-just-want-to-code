@@ -59,16 +59,14 @@ Example round 1:
 Before writing anything show, in one message: the files to create or change; the full resulting config, **personal and team layers separately**, with a comment per key; what each step does on their stack (e.g. "ship: push → GitHub PR → reviewers bob → Jira ABC-123 to In Review → Tempo 1h → Slack"). Then one yes/no question.
 
 ### 2.4 Write on approval
-1. If `command -v justcode` finds nothing, the runtime is not installed yet. The plugin ships only this skill; the runtime lives in the project repository. Point the user to the install section, https://github.com/yusasarisoy/i-just-want-to-code#-install, and wait until `justcode version` works. Do not download or run an installer yourself.
+1. If `command -v justcode` finds nothing, the runtime is not installed yet. The plugin ships only this skill; the runtime lives in the project repository. Point the user to the install section, https://github.com/yusasarisoy/i-just-want-to-code#-install, and wait until `justcode version` works. The user installs it; Claude does not.
 2. Write the config files. Personal keys (`*_SECRET`, `CODE_USER`, `TRACKER_USER`, `TIME_USER`, `REPO_DIR`) never go into `.justcode`.
 3. For `.justcode.local`, add it to `.gitignore`.
 
 The user can also run `justcode setup` in a terminal (same questions, no Claude) and `justcode setup <section>` later.
 
 ### 2.5 Secrets
-For each missing secret give the store command for their OS and let them run it; the OS prompts for the value:
-- macOS: `security add-generic-password -a "$USER" -s justcode-code-token -w`
-- Linux: `secret-tool store --label=justcode-code-token service justcode-code-token`
+For each missing secret, show the user the store command that `justcode doctor` prints for their OS and let them run it themselves; the OS keychain prompts for the value.
 
 `CODE_TOKEN_SECRET=gh` reuses the GitHub CLI login. Never read, echo or store the value yourself.
 
