@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # Generic recording shim: osascript, open, notify-send, xcodebuild, gradle,
-# xclip, wl-copy, launchctl and systemctl link here. Logs argv; stdin goes to
+# fastlane, xclip, wl-copy, launchctl and systemctl link here. Logs argv; stdin goes to
 # $SHIM_STATE/<name>.stdin (clipboard tools).
 name=${0:t}
 print -r -- "$name $*" >>$SHIM_STATE/calls.log

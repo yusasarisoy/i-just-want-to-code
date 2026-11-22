@@ -72,7 +72,7 @@ p_mark; p_run ticket -n -t Task $T/d.txt
 t_eq "ticket -n exits 0" $RC 0
 t_eq "ticket -n sends no writes" "$(p_writes)" ""
 p_run build -n beta 1.2.3 7
-t_has "build -n says the upload needs fastlane" "$OUT" "fastlane is not installed"
+t_has "build -n plans the Play upload" "$OUT" "fastlane supply"
 t_has "build -n plans the Gradle task" "$OUT" ":app:bundleBetaRelease -Pjustcode.versionName=1.2.3 -Pjustcode.versionCode=7"
 t_lacks "build -n ran no Gradle" "$(<$SHIM_STATE/calls.log)" "gradle "
 p_run justcode doctor
