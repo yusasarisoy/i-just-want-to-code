@@ -30,7 +30,7 @@ VPN_HOSTS=(127.0.0.1:$Q)
 VPN_STATUS_CMD='fakevpn status'
 VPN_UP_CMD='$1'
 VPN_DOWN_CMD='fakevpn down'
-NETWORK_WAIT_SECS=${2:-20}
+NETWORK_WAIT_SECS=${2:-60}
 SHIP_POST_TO=webhook"
 }
 config 'fakevpn up'
