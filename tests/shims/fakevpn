@@ -1,0 +1,19 @@
+#!/usr/bin/env zsh
+# Fake VPN client. `up` starts a second mock server on the port in
+# $SHIM_STATE/vpn_port (the "VPN-only" host) and returns once it listens.
+print -r -- "fakevpn $*" >>$SHIM_STATE/calls.log
+pidf=$SHIM_STATE/vpn.pid
+case $1 in
+  status) [[ -f $pidf ]] && kill -0 $(<$pidf) 2>/dev/null ;;
+  up)
+    [[ -f $pidf ]] && kill -0 $(<$pidf) 2>/dev/null && exit 0
+    python3 ${0:A:h:h}/mock/server.py --port $(<$SHIM_STATE/vpn_port) --log $SHIM_STATE/requests.log >/dev/null 2>&1 &!
+    print $! >$pidf
+    repeat 50; do
+      ${commands[curl]} -s -o /dev/null --max-time 1 http://127.0.0.1:$(<$SHIM_STATE/vpn_port)/ && exit 0
+      sleep 0.1
+    done
+    exit 1 ;;
+  down) [[ -f $pidf ]] && kill $(<$pidf) 2>/dev/null; rm -f $pidf ;;
+  never) exit 0 ;;
+esac

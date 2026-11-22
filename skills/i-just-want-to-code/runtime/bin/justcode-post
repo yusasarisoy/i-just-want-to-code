@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+# justcode-post <targets>: send stdin to each comma-separated target
+# (clipboard, slack, teams, webhook). A failure never undoes other work.
+DF_ROOT=${0:A:h:h}; DF_CMD=post
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+[[ $1 == -n ]] && { DF_DRY=1; shift }
+[[ -n $1 && $1 != -h ]] || { print -r -- "usage: justcode-post [-n] clipboard,slack,teams,webhook <message"; exit 1 }
+msg=$(cat)
+[[ -n $msg ]] || df_die "nothing on stdin"
+df_post "$1" "$msg"
+df_finish

@@ -1,0 +1,49 @@
+#!/usr/bin/env zsh
+# tcheck: compare logged time per day with DAY_TARGET_HOURS.
+DF_ROOT=${0:A:h:h}; DF_CMD=tcheck
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: tcheck [-w weeks-back]
+  checks from Monday <weeks-back> weeks ago (default 0 = this week) through today
+  ✓ target met   ✗ short (missing time shown)   • today, or a non-workday with time"
+}
+
+set -- "${TCHECK_DEFAULT_ARGS[@]}" "$@"
+weeks=0
+while getopts ':w:h' o; do
+  case $o in
+    w) [[ $OPTARG == [0-9]## ]] || df_die "-w takes a number"; weeks=$OPTARG ;;
+    h) usage; exit 0 ;;
+    *) df_die "unknown option (tcheck -h)" ;;
+  esac
+done
+[[ $TIME_PROVIDER != none ]] || df_die "no time tracker configured (TIME_PROVIDER=none)"
+
+df_use time
+df_wait_for_host "$TIME_URL" || df_finish
+df_hook PRE
+today=$(df_today)
+bounds=$(df_week_bounds $weeks)
+from=${bounds% *}
+totals=$(time_week_totals $from $today) || df_die "cannot read worklogs ($(df_last_error))"
+typeset -A per
+for line in ${(f)totals}; do per[${line% *}]=${line#* }; done
+
+typeset -i target=$(( DAY_TARGET_HOURS * 3600 ))
+typeset -i sum=0 short=0
+d=$from
+while [[ $d < $today || $d == $today ]]; do
+  dow=$(df_dow $d) secs=${per[$d]:-0}
+  label="$DAY_LABELS[$dow] $d $(df_fmt_duration $secs)"
+  (( sum += secs ))
+  if [[ $d == $today ]]; then df_skip "$label (today)"
+  elif ! df_in_list $dow $WORK_DAYS; then (( secs )) && df_skip "$label (not a workday)"
+  elif (( secs >= target )); then df_ok "$label"
+  else df_fail "$label, $(df_fmt_duration $(( target - secs ))) short"; short=1
+  fi
+  d=$(df_add_days $d 1)
+done
+df_info "total: $(df_fmt_duration $sum)"
+df_hook POST
+df_finish

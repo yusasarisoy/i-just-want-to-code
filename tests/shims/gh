@@ -1,0 +1,5 @@
+#!/usr/bin/env zsh
+# Fake GitHub CLI: only `gh auth token` (from $SHIM_STATE/secrets/gh).
+print -r -- "gh $*" >>$SHIM_STATE/calls.log
+[[ "$1 $2" == "auth token" && -f $SHIM_STATE/secrets/gh ]] && { cat $SHIM_STATE/secrets/gh; exit 0 }
+exit 1

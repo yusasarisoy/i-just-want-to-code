@@ -1,0 +1,288 @@
+#!/usr/bin/env zsh
+# justcode: configuration, trust, health checks, setup and custom commands.
+DF_ROOT=${0:A:h:h}; DF_CMD=justcode
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+source $DF_LIB/commands.zsh
+
+usage() {
+  print -r -- "usage: justcode <command>
+  setup [section] [--layer global|team|local] [-n]   terminal wizard (sections: code tracker time build network messages commands)
+  config                     every effective value and the file it came from
+  doctor [section...]        check tools, config, trust, providers, hosts, secrets, custom commands
+  trust [file...]            review and trust repo files (.justcode, .justcode.local, .justcode-commands/*)
+  untrust [file...]          forget trust for repo files
+  edit global|team|local     open a config layer in \$EDITOR
+  files                      list config files and their trust state
+  command new <name> [--team] | list | check <name|file>
+  run <name> [args]          run a custom command
+  agent install|remove [-n]  run 'vpn watch' in the background (LaunchAgent / systemd user unit)
+  selfcheck                  run the unit tests shipped with the runtime
+  version"
+}
+
+# ---------------------------------------------------------------- config
+key_source() {
+  local k=$1 f src=default
+  for f in $DF_LAYERS; do
+    grep -Eq "^[[:space:]]*((typeset|export|local)[^=]*[[:space:]]+)?$k\+?=" $f 2>/dev/null && src=$f
+  done
+  (( ${+DF_SET_KEYS[$k]} )) && src=JUSTCODE_SET
+  print -r -- $src
+}
+key_value() {
+  local k=$1
+  case ${(tP)k} in
+    association*) local -A h=("${(@kvP)k}"); local out='(' x
+      for x in ${(ok)h}; do out+=" ${(q-)x} ${(q-)h[$x]}"; done; print -r -- "$out )" ;;
+    array*) local -a arr=("${(@P)k}"); print -r -- "(${(j: :)${(@q-)arr}})" ;;
+    *) print -r -- "${(q-)${(P)k}}" ;;
+  esac
+}
+cmd_config() {
+  local k
+  for k in $DF_KEYS; do
+    printf '%-28s %s   # %s%s\n' "$k" "$(key_value $k)" "$(key_source $k)" "$([[ $k == *_SECRET ]] && print ', secret entry name')"
+  done
+  print -r -- "# layers loaded: ${(j:, :)DF_LAYERS:-none}"
+  (( ${#DF_UNTRUSTED} )) && print -r -- "# untrusted (ignored): ${(j:, :)DF_UNTRUSTED}"
+  local f n r
+  for f in $DF_PERSONAL_COMMANDS/*(N.) ${DF_TEAM_COMMANDS:+$DF_TEAM_COMMANDS/*(N.)}; do
+    n=${f:t}
+    df_cmd_valid_name $n || { print -r -- "# command $n: refused (built-in name)"; continue }
+    r=$(df_cmd_resolve $n) && print -r -- "# command $n: ${r#* } (${r%% *})" || print -r -- "# command $n: not trusted"
+  done | sort -u
+}
+
+# ---------------------------------------------------------------- trust
+trust_candidates() {
+  [[ -n $DF_REPO ]] || return 0
+  local f
+  for f in $DF_REPO/.justcode $DF_REPO/.justcode.local ${DF_TEAM_COMMANDS:+$DF_TEAM_COMMANDS/*(N.)}; do
+    [[ -f $f ]] && print -r -- $f
+  done
+}
+trust_copy_path() { print -r -- $DF_TRUST_COPIES/${${1:A}//\//%} }
+trust_forget() {
+  local abs=${1:A} l
+  [[ -f $DF_TRUST_FILE ]] || return 0
+  local -a keep=()
+  for l in "${(@f)$(<$DF_TRUST_FILE)}"; do [[ -n $l && $l != *"  $abs" ]] && keep+=("$l"); done
+  print -rl -- $keep >|$DF_TRUST_FILE
+}
+cmd_trust() {
+  local -a files=($@)
+  (( ${#files} )) || files=(${(f)"$(trust_candidates)"})
+  local f tmp hash ans prev any=0
+  mkdir -p $DF_CONFIG_DIR $DF_TRUST_COPIES
+  for f in $files; do
+    [[ -f $f ]] || { df_fail "$f does not exist"; continue }
+    df_trusted $f && { df_skip "$f is already trusted"; continue }
+    any=1
+    tmp=$(mktemp "${TMPDIR:-/tmp}/justcode-trust.XXXXXX"); cp $f $tmp
+    print -ru2 -- "---- $f"
+    cat -n $tmp >&2
+    prev=$(trust_copy_path $f)
+    if [[ -f $prev ]]; then print -ru2 -- "---- changes since you last trusted it:"; diff -u $prev $tmp >&2
+    else print -ru2 -- "---- (never trusted before)"
+    fi
+    print -rnu2 -- "Trust this file? It can run code on your machine. [y/N] "
+    read -r ans || ans=''
+    if [[ $ans == [yY]* ]]; then
+      hash=$(df_sha256 $tmp)
+      trust_forget $f
+      print -r -- "$hash  ${f:A}" >>$DF_TRUST_FILE
+      cp $tmp $prev
+      df_ok "trusted $f"
+    else
+      df_skip "$f left untrusted"
+    fi
+    rm -f $tmp
+  done
+  (( any )) || (( $# )) || df_skip "nothing to trust"
+}
+cmd_untrust() {
+  local -a files=($@)
+  (( ${#files} )) || files=(${(f)"$(trust_candidates)"})
+  local f
+  for f in $files; do trust_forget $f; rm -f $(trust_copy_path $f); df_ok "untrusted $f"; done
+}
+
+# ---------------------------------------------------------------- doctor
+doctor_secret() {
+  [[ -n $1 ]] || return 0
+  if df_secret_exists "$1"; then df_ok "secret $1 present"
+  else df_fail "secret $1 missing; store it with: $(df_secret_store_cmd $1)"
+  fi
+}
+doctor_host() {
+  local url=$1 what=$2
+  [[ -n $url ]] || return 0
+  if df_host_reachable $url; then df_ok "$what host $(df_url_hostport $url) reachable"
+  elif df_host_needs_vpn $url; then df_fail "$what host $(df_url_hostport $url) not reachable; connect with: vpn up"
+  else df_fail "$what host $(df_url_hostport $url) not reachable"
+  fi
+}
+doctor_provider() {  # doctor_provider <layer> <fn>
+  ( df_use $1 && $2 ) || DF_FAILED=1
+}
+cmd_doctor() {
+  local -a want=($@) all=(tools config code tracker time build network messages commands)
+  (( ${#want} )) || want=($all)
+  local s t
+  for s in $want; do df_in_list $s $all || df_die "unknown doctor section '$s' (${(j:, :)all})"; done
+  if df_in_list tools $want; then
+    for t in git curl jq zsh; do (( $+commands[$t] )) && df_ok "$t" || df_fail "$t not installed"; done
+    (( $+commands[fzf] )) && df_ok "fzf (optional)" || df_skip "fzf not installed (optional)"
+  fi
+  if df_in_list config $want; then
+    (( ${#DF_LAYERS} )) && df_ok "config: ${(j:, :)DF_LAYERS}" || df_fail "no config yet; run: justcode setup"
+    for t in $DF_UNTRUSTED; do df_fail "$t is not trusted; review it, then run: justcode trust"; done
+  fi
+  if df_in_list code $want; then
+    [[ -n $CODE_USER ]] || df_fail "CODE_USER is not set"
+    doctor_host "${CODE_API_URL:-https://$(df_remote_host)}" code
+    doctor_secret "$CODE_TOKEN_SECRET"
+    doctor_provider code code_doctor
+  fi
+  if df_in_list tracker $want; then
+    if [[ $TRACKER_PROVIDER != none ]]; then
+      doctor_host "$TRACKER_URL" tracker; doctor_secret "$TRACKER_TOKEN_SECRET"
+    fi
+    doctor_provider tracker tracker_doctor
+  fi
+  if df_in_list time $want; then
+    if [[ $TIME_PROVIDER != none ]]; then
+      doctor_host "$TIME_URL" time; doctor_secret "$TIME_TOKEN_SECRET"
+    fi
+    doctor_provider time time_doctor
+  fi
+  df_in_list build $want && doctor_provider deploy deploy_doctor
+  df_in_list network $want && doctor_provider vpn vpn_doctor
+  if df_in_list messages $want; then
+    for t in ${(u)${(s:,:)${:-$SHIP_POST_TO,$BUILD_POST_TO,$TICKET_POST_TO}// /}}; do
+      case $t in
+        slack) doctor_secret "$SLACK_WEBHOOK_SECRET" ;; teams) doctor_secret "$TEAMS_WEBHOOK_SECRET" ;;
+        webhook) doctor_secret "$WEBHOOK_SECRET" ;; clipboard|none) ;;
+        *) df_fail "unknown message target '$t'" ;;
+      esac
+    done
+  fi
+  if df_in_list commands $want; then
+    local f
+    for f in $DF_PERSONAL_COMMANDS/*(N.); do
+      df_cmd_valid_name ${f:t} || { df_fail "command ${f:t}: shadows a built-in name; rename it"; continue }
+      df_cmd_check $f || DF_FAILED=1
+    done
+    for f in ${DF_TEAM_COMMANDS:+$DF_TEAM_COMMANDS/*(N.)}; do
+      df_cmd_valid_name ${f:t} || { df_fail "team command ${f:t}: shadows a built-in name; rename it"; continue }
+      if df_trusted $f; then df_cmd_check $f || DF_FAILED=1
+      else df_fail "team command ${f:t} is not trusted; review it, then run: justcode trust"
+      fi
+    done
+  fi
+  df_finish
+}
+
+# ---------------------------------------------------------------- edit / files
+cmd_edit() {
+  local f
+  case $1 in
+    global) f=$DF_GLOBAL_CONFIG; mkdir -p ${f:h} ;;
+    team) [[ -n $DF_REPO ]] || df_die "not in a repository"; f=$DF_REPO/.justcode ;;
+    local)
+      [[ -n $DF_REPO ]] || df_die "not in a repository"; f=$DF_REPO/.justcode.local
+      grep -qxF .justcode.local $DF_REPO/.gitignore 2>/dev/null || { print .justcode.local >>$DF_REPO/.gitignore; df_ok "added .justcode.local to .gitignore" } ;;
+    *) df_die "usage: justcode edit global|team|local" ;;
+  esac
+  [[ -f $f ]] || cp $DF_ROOT/config.example $f 2>/dev/null || : >$f
+  ${=${EDITOR:-vi}} $f
+  [[ $1 == global ]] || df_skip "edited repo files need trust again: justcode trust"
+}
+cmd_files() {
+  local f
+  print -r -- "global   $DF_GLOBAL_CONFIG $([[ -f $DF_GLOBAL_CONFIG ]] && print '(present)' || print '(missing)')"
+  for f in ${(f)"$(trust_candidates)"}; do
+    print -r -- "repo     $f ($(df_trusted $f && print trusted || print 'NOT trusted'))"
+  done
+  print -r -- "trusted  $DF_TRUST_FILE"
+  print -r -- "commands $DF_PERSONAL_COMMANDS"
+}
+
+# ---------------------------------------------------------------- agent (vpn watch in the background)
+cmd_agent() {
+  local action=$1 dry=0 file vpn_bin=${commands[vpn]:-$DF_ROOT/bin/vpn}
+  [[ $2 == -n ]] && dry=1
+  if [[ $DF_OS == macos ]]; then
+    file=$HOME/Library/LaunchAgents/justcode.vpn-watch.plist
+    local body="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<plist version=\"1.0\"><dict>
+<key>Label</key><string>justcode.vpn-watch</string>
+<key>ProgramArguments</key><array><string>$vpn_bin</string><string>watch</string></array>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+</dict></plist>"
+  else
+    file=$HOME/.config/systemd/user/justcode-vpn-watch.service
+    local body="[Unit]
+Description=justcode vpn watch
+[Service]
+ExecStart=$vpn_bin watch
+Restart=on-failure
+[Install]
+WantedBy=default.target"
+  fi
+  case $action in
+    install)
+      if (( dry )); then df_dry "write $file and load it"; return; fi
+      mkdir -p ${file:h}; print -r -- "$body" >$file
+      if [[ $DF_OS == macos ]]; then launchctl load -w $file; else systemctl --user daemon-reload && systemctl --user enable --now ${file:t}; fi
+      df_ok "installed $file" ;;
+    remove)
+      if (( dry )); then df_dry "unload and delete $file"; return; fi
+      if [[ $DF_OS == macos ]]; then launchctl unload -w $file 2>/dev/null; else systemctl --user disable --now ${file:t} 2>/dev/null; fi
+      rm -f $file; df_ok "removed $file" ;;
+    *) df_die "usage: justcode agent install|remove [-n]" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- selfcheck
+cmd_selfcheck() {
+  local dir f fails=0
+  for dir in $DF_ROOT/selftest ${DF_ROOT:h:h:h}/tests/unit; do [[ -d $dir ]] && break; done
+  [[ -d $dir ]] || df_die "no unit tests shipped with this runtime"
+  for f in $dir/*.zsh(N); do
+    JUSTCODE_ROOT=$DF_ROOT zsh $f >/dev/null 2>&1 && df_ok "${f:t}" || { df_fail "${f:t}"; fails=1 }
+  done
+  df_finish
+}
+
+# ---------------------------------------------------------------- dispatch
+sub=${1:-help}; (( $# )) && shift
+case $sub in
+  config) cmd_config ;;
+  doctor) cmd_doctor "$@" ;;
+  trust) cmd_trust "$@" ;;
+  untrust) cmd_untrust "$@" ;;
+  edit) cmd_edit "$@" ;;
+  files) cmd_files ;;
+  version|--version) print -r -- "justcode $DF_VERSION" ;;
+  selfcheck) cmd_selfcheck ;;
+  agent) cmd_agent "$@" ;;
+  setup) source $DF_LIB/setup.zsh; df_setup_main "$@"; exit $? ;;
+  run) [[ -n $1 ]] || df_die "usage: justcode run <name> [args]"; df_cmd_run "$@"; exit $? ;;
+  command)
+    case $1 in
+      new) [[ -n $2 ]] || df_die "usage: justcode command new <name> [--team]"
+           df_cmd_new $2 $([[ $3 == --team ]] && print team || print personal) ;;
+      list) df_cmd_list ;;
+      check)
+        [[ -n $2 ]] || df_die "usage: justcode command check <name|file>"
+        if [[ -f $2 ]]; then df_cmd_check $2
+        else r=$(df_cmd_resolve $2) || df_die "no runnable custom command '$2' (missing, untrusted or a built-in name)"
+             df_cmd_check ${r#* }
+        fi
+        exit $? ;;
+      *) df_die "usage: justcode command new|list|check" ;;
+    esac ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 1 ;;
+esac

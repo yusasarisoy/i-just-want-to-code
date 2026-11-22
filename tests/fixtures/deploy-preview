@@ -1,0 +1,47 @@
+#!/usr/bin/env zsh
+# deploy-preview: example custom command. Checks the preview service, asks it to
+# deploy the current branch, and sends the preview link.
+# Settings: DEPLOY_PREVIEW_URL, DEPLOY_PREVIEW_TOKEN_SECRET, DEPLOY_PREVIEW_POST_TO,
+# DEPLOY_PREVIEW_DEFAULT_ARGS, DEPLOY_PREVIEW_SKIP, DEPLOY_PREVIEW_PRE_HOOK, DEPLOY_PREVIEW_POST_HOOK.
+DF_ROOT=${JUSTCODE_ROOT:-$HOME/.local/share/justcode}
+DF_CMD=deploy-preview
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: deploy-preview [-n]
+  -n  dry run: read everything, write nothing"
+}
+
+set -- "${DF_DEFAULT_ARGS[@]}" "$@"
+while getopts ':nh' o; do
+  case $o in
+    n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    *) df_die "unknown option -$OPTARG (deploy-preview -h)" ;;
+  esac
+done
+
+url=${DEPLOY_PREVIEW_URL:-}
+secret=${DEPLOY_PREVIEW_TOKEN_SECRET:-justcode-deploy-preview-token}
+[[ -n $url ]] || df_die "DEPLOY_PREVIEW_URL is not set (justcode edit global)"
+branch=$(git symbolic-ref --short -q HEAD) || df_die "detached HEAD"
+df_wait_for_host "$url" || df_finish
+df_hook PRE
+
+if df_http "$secret" bearer GET "$url/status"; then df_ok "preview service is up"
+else df_fail "preview service: $DF_HTTP_ERR"; df_finish
+fi
+
+link=''
+if df_step_off deploy; then df_skip "deploy skipped"
+elif (( DF_DRY )); then df_dry "POST $url/deploy for $branch"
+elif df_http "$secret" bearer POST "$url/deploy" -H 'Content-Type: application/json' \
+    --data-binary "$(jq -nc --arg b $branch '{branch:$b}')"; then
+  link=$(jq -r .url <<<$DF_HTTP_BODY)
+  df_ok "preview deployed: $link"
+else df_fail "deploy: $DF_HTTP_ERR"
+fi
+
+[[ -n $link ]] && df_post "${DEPLOY_PREVIEW_POST_TO:-clipboard}" "$(df_fill 'Preview of {branch}: {url}' branch $branch url $link)"
+df_hook POST
+df_finish

@@ -1,0 +1,7 @@
+#!/usr/bin/env zsh
+# Wraps the real curl: records argv (one line per call) so tests can prove no
+# secret ever appears in a process argument list, then runs the real binary.
+print -r -- "${(j: :)${(q-)@}}" >>$SHIM_STATE/curl.argv
+here=${0:A:h}
+path=(${path:#$here})
+exec ${commands[curl]} "$@"

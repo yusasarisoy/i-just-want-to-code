@@ -1,0 +1,116 @@
+#!/usr/bin/env zsh
+# build: build and upload from a clean temporary worktree, then send a message.
+DF_ROOT=${0:A:h:h}; DF_CMD=build
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: build [-n] [-k kind] [-c config] [-b ref | -w] [-K \"ABC-1 ABC-2\"] <env> [version] [build]
+  -k  build kind: ${(j:, :)BUILD_KINDS} (default ${BUILD_KINDS[1]:-none})
+  -c  build configuration (default $BUILD_CONFIG)
+  -b  git ref to build (default HEAD)
+  -w  include uncommitted work (snapshot to refs/justcode/builds/...)
+  -K  ticket keys to link in the message
+  -n  dry run: print the full plan, build nothing"
+}
+
+set -- "${BUILD_DEFAULT_ARGS[@]}" "$@"
+kind=${BUILD_KINDS[1]:-} config=$BUILD_CONFIG ref='' snap=0 keys=''
+while getopts ':k:c:b:wK:nh' o; do
+  case $o in
+    k) kind=$OPTARG ;; c) config=$OPTARG ;; b) ref=$OPTARG ;; w) snap=1 ;; K) keys=$OPTARG ;;
+    n) DF_DRY=1 ;; h) usage; exit 0 ;;
+    :) df_die "-$OPTARG needs a value (build -h)" ;;
+    *) df_die "unknown option -$OPTARG (build -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# >= 1 )) || { usage >&2; exit 1 }
+env=$1 version=${2:-} bnum=${3:-}
+[[ -n $ref && $snap == 1 ]] && df_die "-b and -w cannot be combined"
+(( ${#BUILD_KINDS} == 0 )) || df_in_list "$kind" $BUILD_KINDS || df_die "unknown kind '$kind' (BUILD_KINDS: ${(j:, :)BUILD_KINDS})"
+[[ $DEPLOY_PROVIDER != none ]] || df_die "no deploy provider configured (DEPLOY_PROVIDER=none)"
+git rev-parse --git-dir >/dev/null 2>&1 || df_die "not inside a git repository"
+df_use deploy
+
+if [[ -z $version || -z $bnum ]]; then
+  last=$(deploy_last_build_number)
+  [[ -n $last ]] && df_info "last uploaded: $last" || df_info "no uploaded build found in $BUILD_OUTPUT_DIR"
+  if [[ -t 0 ]]; then
+    lv=${${last#* }% *} lb=${last##* }
+    [[ $lb == [0-9]## ]] && lb=$(( lb + 1 )) || lb=''
+    [[ -n $version ]] || { read -r "version?version [$lv]: "; version=${version:-$lv} }
+    [[ -n $bnum ]] || { read -r "bnum?build [$lb]: "; bnum=${bnum:-$lb} }
+  fi
+  [[ -n $version && -n $bnum ]] || df_die "give version and build: build $env <version> <build>"
+fi
+
+out=${BUILD_OUTPUT_DIR/#\~/$HOME}/$(df_today)-$env-$config-$version-$bnum
+lock=${BUILD_OUTPUT_DIR/#\~/$HOME}/.justcode-build.lock
+tree=''
+
+cleanup() {
+  [[ -n $tree ]] && git -C $DF_REPO worktree remove --force $tree >/dev/null 2>&1
+  [[ -f $lock && $(<$lock) == $$ ]] && rm -f $lock
+}
+
+# ---- source ref
+if (( snap )); then
+  sref=refs/justcode/builds/$env-$version-$bnum
+  sha=$(git stash create 2>/dev/null); [[ -n $sha ]] || sha=$(git rev-parse HEAD)
+  if (( DF_DRY )); then df_dry "snapshot working tree to $sref"
+  else git update-ref $sref $sha && df_ok "snapshot $sref" || df_die "snapshot failed"
+  fi
+  ref=$sha
+fi
+ref=${ref:-HEAD}
+git rev-parse -q --verify "$ref^{commit}" >/dev/null || df_die "unknown ref '$ref'"
+
+# ---- message
+msg=$(df_fill "${BUILD_MESSAGE:-"{env} {version} ({build}) {kind} build uploaded"}" env $env version $version build $bnum kind "$kind" config $config)
+html=$(df_html_escape $msg)
+if [[ -n $keys ]]; then
+  [[ $TRACKER_PROVIDER != none ]] && df_use tracker
+  for k in ${=keys}; do
+    k=$(df_ticket_key $k) || continue
+    u=$( [[ $TRACKER_PROVIDER != none ]] && tracker_url $k 2>/dev/null )
+    msg+=$'\n'"$k${u:+ $u}"
+    html+="<br>${u:+<a href=\"$(df_html_escape $u)\">}$k${u:+</a>}"
+  done
+fi
+
+if (( DF_DRY )); then
+  df_dry "lock $lock"
+  df_dry "git worktree add --detach <tmp> $(git rev-parse --short "$ref^{commit}")"
+  df_dry "output and log: $out/build.log"
+  deploy_build $env $version $bnum $config "<tmp>/$BUILD_PROJECT_DIR" $out
+  deploy_upload $out
+  df_dry "write $out/.uploaded"
+  df_post "$BUILD_POST_TO" "$msg"
+  df_finish
+fi
+
+# ---- lock (a stale lock whose process is gone is removed)
+mkdir -p ${lock:h}
+if [[ -f $lock ]] && ! kill -0 $(<$lock) 2>/dev/null; then rm -f $lock; df_skip "removed a stale build lock"; fi
+if ! ( setopt noclobber; print $$ >$lock ) 2>/dev/null; then df_die "another build is running (pid $(<$lock))"; fi
+trap cleanup EXIT INT TERM
+
+df_hook PRE
+mkdir -p $out
+tree=$(mktemp -d "${TMPDIR:-/tmp}/justcode-build.XXXXXX")
+git worktree add -q --detach $tree "$ref" >/dev/null 2>&1 || df_die "could not create a worktree for $ref; nothing was uploaded"
+df_ok "clean worktree at $(git rev-parse --short "$ref^{commit}")"
+
+if ! deploy_build $env $version $bnum $config $tree/$BUILD_PROJECT_DIR $out; then
+  df_die "build failed; nothing was uploaded. Log: $out/build.log"
+fi
+df_ok "built $env $version ($bnum)"
+if ! deploy_upload $out; then
+  df_die "upload failed; the build is not marked as uploaded. Log: $out/build.log"
+fi
+print -r -- "$env $version $bnum" >$out/.uploaded
+df_ok "uploaded $env $version ($bnum)"
+df_post "$BUILD_POST_TO" "$msg" "$html"
+print -r -- "$msg"
+df_hook POST
+df_finish

@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+# Fake macOS `security`: secrets are files in $SHIM_STATE/secrets/<service>.
+print -r -- "security $*" >>$SHIM_STATE/calls.log
+case $1 in
+  find-generic-password)
+    shift; svc=''
+    while (( $# )); do [[ $1 == -s ]] && { svc=$2; shift }; shift; done
+    [[ -f $SHIM_STATE/secrets/$svc ]] || { print -u2 "The specified item could not be found in the keychain."; exit 44 }
+    cat $SHIM_STATE/secrets/$svc ;;
+  add-generic-password) exit 0 ;;
+  *) exit 1 ;;
+esac

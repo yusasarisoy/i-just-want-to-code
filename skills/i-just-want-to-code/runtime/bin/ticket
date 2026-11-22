@@ -1,0 +1,93 @@
+#!/usr/bin/env zsh
+# ticket: create tickets from draft files (first line = title, rest = description).
+DF_ROOT=${0:A:h:h}; DF_CMD=ticket
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: ticket [-n] -t type [-P points|p1,p2,...] [-v version] [-e epic] [-s sprint]
+              [-p priority] [-a assignee] [-f 'Field=Value']... <file>...
+  tickets in a file are separated by a line equal to: $TICKET_SEPARATOR
+  -P  one estimate for all tickets, or one per ticket in order
+  -f  any field by its screen name; repeatable
+  -n  dry run: resolves every field, creates nothing"
+}
+
+set -- "${TICKET_DEFAULT_ARGS[@]}" "$@"
+type=$TICKET_DEFAULT_TYPE points='' version='' epic='' sprint=$TICKET_DEFAULT_SPRINT
+prio=$TICKET_DEFAULT_PRIORITY assignee='' extra=()
+while getopts ':t:P:v:e:s:p:a:f:nh' o; do
+  case $o in
+    t) type=$OPTARG ;; P) points=$OPTARG ;; v) version=$OPTARG ;; e) epic=$OPTARG ;;
+    s) sprint=$OPTARG ;; p) prio=$OPTARG ;; a) assignee=$OPTARG ;;
+    f) [[ $OPTARG == ?*=* ]] || df_die "-f takes 'Field name=Value'"; extra+=("$OPTARG") ;;
+    n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    :) df_die "-$OPTARG needs a value (ticket -h)" ;;
+    *) df_die "unknown option -$OPTARG (ticket -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# )) || { usage >&2; exit 1 }
+[[ -n $type ]] || df_die "-t type is required (or set TICKET_DEFAULT_TYPE)"
+[[ $TRACKER_PROVIDER != none ]] || df_die "no tracker configured (TRACKER_PROVIDER=none)"
+[[ -n $TICKET_PROJECT ]] || df_die "TICKET_PROJECT is not set"
+
+df_split_tickets "$@" || exit 1
+(( ${#DF_T_TITLES} )) || df_die "no tickets found in $*"
+pts=(${(s:,:)points})
+if (( ${#pts} > 1 && ${#pts} != ${#DF_T_TITLES} )); then
+  df_die "-P has ${#pts} estimates for ${#DF_T_TITLES} tickets"
+fi
+if (( ${#pts} == 1 )); then p=$pts[1]; pts=(); repeat ${#DF_T_TITLES} pts+=($p); fi
+for p in $pts; do [[ $p == [0-9]##(.[0-9]##|) ]] || df_die "bad estimate '$p'"; done
+if df_in_list "$type" $TICKET_ESTIMATE_TYPES && (( ! ${#pts} )); then
+  df_die "$type tickets need an estimate: -P points"
+fi
+
+type_fields=TICKET_FIELDS_${${type:u}//[^A-Z0-9]/_}
+DF_CREATE_FIELDS=($TICKET_FIELDS ${(P)type_fields})
+[[ -n $prio ]] && DF_CREATE_FIELDS+=("priority=$prio")
+[[ -n $TICKET_DEFAULT_COMPONENT ]] && DF_CREATE_FIELDS+=("components=$TICKET_DEFAULT_COMPONENT")
+[[ -n $version ]] && DF_CREATE_FIELDS+=("fixVersions=$version")
+[[ -n $epic ]] && DF_CREATE_FIELDS+=("parent=$epic")
+[[ -n $sprint ]] && DF_CREATE_FIELDS+=("sprint=$sprint")
+[[ -n $assignee ]] && DF_CREATE_FIELDS+=("assignee=$assignee")
+DF_CREATE_FIELDS+=($extra)
+
+df_use tracker
+df_wait_for_host "$TRACKER_URL" || df_finish
+df_hook PRE
+
+links=() html=()
+tmp=$(mktemp "${TMPDIR:-/tmp}/justcode-ticket.XXXXXX")
+for (( i = 1; i <= ${#DF_T_TITLES}; i++ )); do
+  title=$DF_T_TITLES[i]
+  found=$(tracker_find_by_title "$title") || { df_fail "search for \"$title\" failed ($(df_last_error)); stopping, nothing more is created"; break }
+  if [[ -n $found ]]; then
+    df_skip "exists: $found \"$title\""; tkey=$found
+  else
+    print -r -- "$DF_T_DESCS[i]" >|$tmp
+    tkey=$(tracker_create "$type" "$title" $tmp) || { df_fail "\"$title\" not created ($(df_last_error)); stopping"; break }
+    if (( DF_DRY )); then tkey=''
+    else df_ok "created $tkey \"$title\""
+    fi
+  fi
+  if [[ -n $pts[i] ]]; then
+    if (( DF_DRY )) || [[ -z $tkey ]]; then df_dry "estimate ${tkey:-new ticket}: $pts[i]"
+    elif [[ -z $found ]]; then tracker_set_estimate $tkey $pts[i] && df_ok "estimate $tkey: $pts[i]" || df_fail "estimate $tkey failed ($(df_last_error))"
+    fi
+  fi
+  if [[ -n $tkey ]]; then
+    url=$(tracker_url $tkey 2>/dev/null)
+    links+=("$(df_fill "${TICKET_MESSAGE:-"{url}"}" url "$url" key $tkey title "$title")")
+    html+=("<a href=\"$(df_html_escape $url)\">$(df_html_escape $tkey)</a> $(df_html_escape $title)")
+  fi
+done
+rm -f $tmp
+
+if (( ${#links} )); then
+  df_post "$TICKET_POST_TO" "${(pj:\n:)links}" "${(j:<br>:)html}"
+  print -r -- "${(pj:\n:)links}"
+fi
+df_hook POST
+df_finish

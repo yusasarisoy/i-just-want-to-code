@@ -1,0 +1,71 @@
+#!/usr/bin/env zsh
+# tpull: fetch, fast-forward when possible, and on divergence recommend merge or rebase.
+DF_ROOT=${0:A:h:h}; DF_CMD=tpull
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: tpull [-n]
+  fast-forwards the current branch; on divergence asks [r]ecommended/[o]ther/[c]ancel
+  -n  dry run: fetch and report, change nothing"
+}
+
+set -- "${TPULL_DEFAULT_ARGS[@]}" "$@"
+while getopts ':nh' o; do
+  case $o in n) DF_DRY=1 ;; h) usage; exit 0 ;; *) df_die "unknown option (tpull -h)" ;; esac
+done
+
+gd=$(git rev-parse --git-dir 2>/dev/null) || df_die "not inside a git repository"
+[[ -f $gd/MERGE_HEAD || -d $gd/rebase-merge || -d $gd/rebase-apply ]] && df_die "a merge or rebase is in progress; finish or abort it first"
+branch=$(git symbolic-ref --short -q HEAD) || df_die "detached HEAD"
+up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null) || df_die "$branch has no upstream (git push -u)"
+remote=${up%%/*}
+
+df_wait_for_host "https://$(df_remote_host)" || df_finish
+df_hook PRE
+git fetch -q $remote || df_die "git fetch $remote failed"
+df_ok "fetched $remote"
+
+ahead=$(git rev-list --count $up..HEAD) behind=$(git rev-list --count HEAD..$up)
+if (( behind == 0 )); then
+  df_skip "$branch is up to date$( (( ahead )) && print " ($ahead local commit(s) not pushed)")"; df_finish
+fi
+if (( ahead == 0 )); then
+  if (( DF_DRY )); then df_dry "fast-forward $branch by $behind commit(s)"; df_finish; fi
+  git merge -q --ff-only $up && df_ok "fast-forwarded $behind commit(s)" || df_die "fast-forward failed (uncommitted changes in the way?)"
+  df_hook POST; df_finish
+fi
+
+df_skip "$branch and $up have diverged"
+df_info "local only ($ahead):"; git log --format='    %h %s' $up..HEAD >&2
+df_info "remote only ($behind):"; git log --format='    %h %s' HEAD..$up >&2
+
+why='' rec=rebase
+if [[ -n $(git rev-list --merges $up..HEAD) ]]; then rec=merge why="local commits include merges"
+else
+  for c in ${(f)"$(git rev-list $up..HEAD)"}; do
+    if git branch -r --contains $c | grep -vqxF "  $up"; then rec=merge why="local commits also exist on another remote branch"; break; fi
+  done
+fi
+[[ -n $why ]] || why="local commits are private; rebase keeps history linear"
+other=$([[ $rec == merge ]] && print rebase || print merge)
+df_info "recommended: $rec ($why)"
+
+if (( DF_DRY )) || [[ ! -t 0 ]]; then
+  (( DF_DRY )) && df_dry "would ask: [r]ecommended ($rec) / [o]ther ($other) / [c]ancel"
+  exit 1
+fi
+read -r "ans?[r]ecommended ($rec) / [o]ther ($other) / [c]ancel: "
+case $ans in
+  r|R) how=$rec ;; o|O) how=$other ;; *) df_skip "cancelled; nothing changed"; exit 1 ;;
+esac
+if [[ $how == rebase ]]; then git rebase -q $up; else git merge -q --no-edit $up; fi
+if (( $? )); then
+  df_fail "conflict during $how"
+  if [[ $how == rebase ]]; then df_info "fix the files, then: git add <files> && git rebase --continue   (or: git rebase --abort)"
+  else df_info "fix the files, then: git add <files> && git commit   (or: git merge --abort)"
+  fi
+  exit 1
+fi
+df_ok "$how done"
+df_hook POST
+df_finish

@@ -1,0 +1,46 @@
+#!/usr/bin/env zsh
+# vpn: status | up | down | re | watch, driven by VPN_PROVIDER and VPN_HOSTS.
+DF_ROOT=${0:A:h:h}; DF_CMD=vpn
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: vpn status|up|down|re|watch
+  status  VPN state and reachability of each VPN_HOSTS entry
+  up/down connect / disconnect; re = down then up
+  watch   poll VPN_HOSTS every ${VPN_WATCH_SECS}s and notify on a confirmed change"
+}
+
+df_use vpn
+hosts_up() {  # 0 when every VPN host answers
+  local h
+  for h in $VPN_HOSTS; do df_host_reachable "https://${h//\*/x}" || return 1; done
+  return 0
+}
+
+case ${1:-status} in
+  -h|help) usage ;;
+  status)
+    [[ $VPN_PROVIDER == none ]] && { df_skip "no VPN configured"; exit 0 }
+    vpn_status; rc=$?
+    (( rc == 0 )) && df_ok "vpn: connected" || { (( rc == 3 )) || df_fail "vpn: not connected" }
+    for h in $VPN_HOSTS; do
+      df_host_reachable "https://$h" && df_ok "$h reachable" || df_fail "$h not reachable"
+    done
+    df_finish ;;
+  up) vpn_up && df_ok "vpn up" || df_die "vpn up failed" ;;
+  down) vpn_down && df_ok "vpn down" || df_die "vpn down failed" ;;
+  re) vpn_down; vpn_up && df_ok "vpn reconnected" || df_die "vpn up failed" ;;
+  watch)
+    (( ${#VPN_HOSTS} )) || df_die "vpn watch needs VPN_HOSTS"
+    state='' prev=''
+    while :; do
+      hosts_up && now=up || now=down
+      if [[ $now == $prev && $now != $state ]]; then
+        [[ -n $state ]] && df_notify justcode "VPN hosts are $now" $([[ $now == down ]] && print fail)
+        state=$now; df_info "$(df_date '%H:%M') hosts $now"
+      fi
+      prev=$now
+      sleep $VPN_WATCH_SECS
+    done ;;
+  *) usage >&2; exit 1 ;;
+esac

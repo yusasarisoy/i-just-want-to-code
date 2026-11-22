@@ -1,0 +1,18 @@
+{
+  "name": "i-just-want-to-code",
+  "owner": {
+    "name": "yusasarisoy",
+    "url": "https://github.com/yusasarisoy"
+  },
+  "metadata": {
+    "description": "i-just-want-to-code: the busywork around your code (PRs, tickets, timesheets, builds, team posts) in one command per step."
+  },
+  "plugins": [
+    {
+      "name": "i-just-want-to-code",
+      "source": "./",
+      "description": "Ship, pull, log time, file tickets, build and distribute with one command per step; configurable for any code host, tracker, time tracker and chat.",
+      "version": "0.2.0"
+    }
+  ]
+}

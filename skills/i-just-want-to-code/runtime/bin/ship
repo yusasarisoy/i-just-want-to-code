@@ -1,0 +1,232 @@
+#!/usr/bin/env zsh
+# ship: push the branch, open or update its pull request, request reviewers,
+# enable auto-merge, move the ticket, log time and send the message.
+DF_ROOT=${0:A:h:h}; DF_CMD=ship
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: ship [-n] [-l range|duration] [-d day] [-k ticket] [-t target] [-m title]
+            [-r reviewer,...] [-a | -A] [-D]
+  -l  log time: 9-10, 09:30-12:00, 1h30m, 45m
+  -d  day for the time log: today (default), yesterday, YYYY-MM-DD, DD.MM.YYYY
+  -k  ticket key (default: from the branch name; a bare number uses TICKET_PREFIX)
+  -t  target branch (default: the closest of TARGET_BRANCHES and release/*)
+  -m  pull request title (also renames an existing one)
+  -r  reviewers, comma separated (default: DEFAULT_REVIEWERS)
+  -a  enable auto-merge      -A  no auto-merge (overrides a default -a)
+  -D  draft: no auto-merge, ticket status untouched
+  -n  dry run: read everything, write nothing"
+}
+
+typeset -i opt_a=0 opt_A=0 opt_D=0 explicit_a=0 title_given=0
+log='' day='' key='' target='' title='' reviewers=''
+parse() {
+  local src=$1 o OPTIND=1; shift
+  while getopts ':l:d:k:t:m:r:aADnh' o; do
+    case $o in
+      l) log=$OPTARG ;; d) day=$OPTARG ;; k) key=$OPTARG ;; t) target=$OPTARG ;;
+      m) title=$OPTARG title_given=1 ;; r) reviewers=$OPTARG ;;
+      a) opt_a=1; [[ $src == user ]] && explicit_a=1 ;;
+      A) opt_A=1 ;; D) opt_D=1 ;; n) DF_DRY=1 ;;
+      h) usage; exit 0 ;;
+      :) df_die "-$OPTARG needs a value (ship -h)" ;;
+      *) df_die "unknown option -$OPTARG (ship -h)" ;;
+    esac
+  done
+  shift $(( OPTIND - 1 ))
+  (( $# == 0 )) || df_die "unexpected argument '$1' (ship -h)"
+}
+parse default "${SHIP_DEFAULT_ARGS[@]}"
+parse user "$@"
+
+typeset -i auto
+if (( opt_D )); then
+  (( explicit_a )) && df_die "-a and -D cannot be combined: a draft is never auto-merged"
+  auto=0
+else
+  auto=$(( opt_a && ! opt_A ))
+fi
+
+# ---- 1. preflight (local)
+git rev-parse --git-dir >/dev/null 2>&1 || df_die "not inside a git repository"
+branch=$(git symbolic-ref --short -q HEAD) || df_die "detached HEAD; check out a branch first"
+for p in $PROTECTED_BRANCHES $TARGET_BRANCHES; do
+  [[ $branch == ${~p} ]] && df_die "refusing to ship from '$branch' (protected or target branch)"
+done
+[[ -n $CODE_USER ]] || df_die "CODE_USER is not set; justcode only ships as a known account (justcode setup code)"
+R=$GIT_REMOTE
+if [[ -n $key ]]; then key=$(df_ticket_key $key) || df_die "'$key' is not a ticket key (TICKET_KEY_REGEX)"
+else key=$(df_ticket_from_branch $branch)
+fi
+typeset -i ticket_on=0 time_on=0
+[[ $TRACKER_PROVIDER != none && -n $key ]] && ! df_step_off ticket && ticket_on=1
+[[ -n $log && $TIME_PROVIDER != none && -n $key ]] && ! df_step_off time && time_on=1
+if [[ -n $log ]]; then
+  day=$(df_parse_day "$day") || df_die "bad day '$day' (today, yesterday, YYYY-MM-DD, DD.MM.YYYY)"
+  if range=$(df_parse_range $log); then secs=$(( (${range#* } - ${range% *}) * 60 )); start=$(df_min_to_hhmm ${range% *})
+  elif secs=$(df_parse_duration $log); then start=''
+  else df_die "bad -l '$log' (9-10, 09:30-12:00, 1h30m, 45m)"
+  fi
+fi
+
+# ---- 2. network
+df_use code
+df_wait_for_host "${CODE_API_URL:-https://$(df_remote_host)}" || df_finish
+(( ticket_on )) && { df_wait_for_host "$TRACKER_URL" || df_finish }
+(( time_on )) && { df_wait_for_host "$TIME_URL" || df_finish }
+
+# ---- 1b. preflight (identity): fail closed
+who=$(code_whoami) || df_die "cannot read the token owner ($(df_last_error)); not shipping"
+[[ $who == $CODE_USER ]] || df_die "the token belongs to '$who' but CODE_USER is '$CODE_USER'; not shipping"
+df_ok "signed in as $who"
+
+# ---- 3. target
+git fetch -q $R 2>/dev/null || df_fail "git fetch $R failed; using the refs already known"
+if [[ -n $target ]]; then
+  git rev-parse -q --verify refs/remotes/$R/$target >/dev/null || df_die "target '$target' does not exist on $R"
+else
+  best=-1
+  for c in $TARGET_BRANCHES ${(f)"$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/$R/release/)"}; do
+    git rev-parse -q --verify refs/remotes/$R/$c >/dev/null || continue
+    n=$(git rev-list --count $R/$c..HEAD)
+    if (( best < 0 || n < best )); then best=$n target=$c; fi
+  done
+  [[ -n $target ]] || df_die "none of TARGET_BRANCHES (${(j:, :)TARGET_BRANCHES}) exists on $R; pass -t"
+fi
+df_ok "target $target"
+[[ -n $title ]] || title=$(git log --reverse --format=%s $R/$target..HEAD | head -1)
+[[ -n $title ]] || title=$branch
+turl=''
+(( ticket_on )) && turl=$(tracker_url $key 2>/dev/null)
+
+# ---- 4. pre hook
+export JUSTCODE_BRANCH=$branch JUSTCODE_TARGET=$target JUSTCODE_TICKET=$key JUSTCODE_DRY_RUN=$DF_DRY
+df_hook PRE
+
+# ---- 5. push + pull request
+if [[ $(git rev-parse HEAD) == $(git rev-parse -q --verify refs/remotes/$R/$branch) ]]; then
+  df_skip "$branch already pushed"
+elif (( DF_DRY )); then
+  df_dry "git push -u $R $branch"
+else
+  git push -q -u $R $branch 2>/dev/null && df_ok "pushed $branch" || df_die "git push failed; nothing else was done"
+fi
+
+pr=$(code_find_pr $branch) || df_die "cannot look up the pull request ($(df_last_error))"
+if [[ -n $pr ]]; then
+  id=$(jq -r .id <<<$pr) url=$(jq -r .url <<<$pr)
+  df_ok "pull request exists: $url"
+  if (( title_given )) && [[ $title != $(jq -r .title <<<$pr) ]]; then
+    if (( DF_DRY )); then df_dry "rename pull request to \"$title\""
+    else code_update_pr $id "title=$title" && df_ok "title updated" || df_fail "title update failed ($(df_last_error))"
+    fi
+  fi
+  if [[ $(jq -r .draft <<<$pr) == true ]] && (( ! opt_D )); then
+    if (( DF_DRY )); then df_dry "mark pull request ready for review"
+    else code_set_draft $id 0 && df_ok "marked ready for review" || df_fail "could not leave draft ($(df_last_error))"
+    fi
+  fi
+else
+  if (( DF_DRY )); then
+    df_dry "create pull request $branch -> $target: \"$title\"$( (( opt_D )) && print ' (draft)')"
+    id=new url='<new pull request>' pr='{"reviewers":[]}'
+  else
+    pr=$(code_create_pr $branch $target "$title" $opt_D) || df_die "could not create the pull request ($(df_last_error))"
+    id=$(jq -r .id <<<$pr) url=$(jq -r .url <<<$pr)
+    df_ok "pull request created: $url"
+  fi
+fi
+
+# ---- 6. description and labels
+uargs=()
+[[ -n $SHIP_PR_DESCRIPTION ]] && uargs+=("description=$(df_fill "$SHIP_PR_DESCRIPTION" ticket "$key" ticket_url "$turl" branch $branch title "$title" target $target)")
+(( ${#SHIP_LABELS} )) && uargs+=("labels+=${(j:,:)SHIP_LABELS}")
+if (( ${#uargs} )) && ! df_step_off description; then
+  if (( DF_DRY )); then df_dry "set description (only if empty) and labels: ${(j:, :)SHIP_LABELS:-none}"
+  else code_update_pr $id $uargs && df_ok "description and labels" || df_fail "description/labels failed ($(df_last_error))"
+  fi
+fi
+
+# ---- 7. reviewers
+if df_step_off reviewers; then df_skip "reviewers skipped"
+else
+  want=(${(s:,:)reviewers}); (( ${#want} )) || want=($DEFAULT_REVIEWERS)
+  want=(${want:#$CODE_USER})
+  have=(${(f)"$(jq -r '.reviewers[]?' <<<$pr)"})
+  new=(${want:|have})
+  if (( ! ${#new} )); then df_skip "reviewers: nothing to add"
+  elif (( DF_DRY )); then df_dry "request reviewers: ${(j:, :)new}"
+  else code_add_reviewers $id $new && df_ok "reviewers: ${(j:, :)new}" || df_fail "reviewers failed ($(df_last_error))"
+  fi
+fi
+
+# ---- 8. CI nudge
+if [[ -n $CI_NUDGE_JOB ]] && ! df_step_off ci; then
+  if (( DF_DRY )); then df_dry "play then cancel manual job '$CI_NUDGE_JOB'"
+  else
+    code_ci_nudge $branch $(git rev-parse HEAD); rc=$?
+    (( rc == 0 )) && df_ok "CI nudge: $CI_NUDGE_JOB"
+    (( rc != 0 && rc != 3 )) && df_fail "CI nudge failed ($(df_last_error))"
+  fi
+fi
+
+# ---- 9. auto-merge
+if (( ! auto )); then df_skip "auto-merge off"
+elif (( DF_DRY )); then df_dry "enable auto-merge ($MERGE_METHOD) when checks pass"
+else
+  code_auto_merge $id; rc=$?
+  case $rc in
+    0) df_ok "auto-merge enabled ($MERGE_METHOD)" ;;
+    2|3) ;;
+    *) df_fail "auto-merge failed ($(df_last_error))" ;;
+  esac
+fi
+
+# ---- 10. ticket
+if [[ $TRACKER_PROVIDER == none ]]; then df_skip "ticket: no tracker configured"
+elif [[ -z $key ]]; then df_skip "ticket: no key in '$branch'"
+elif df_step_off ticket; then df_skip "ticket: skipped"
+elif (( opt_D )); then df_skip "ticket: draft, $key left as it is"
+else
+  df_use tracker
+  want_status=$(df_status_for_branch $branch)
+  if ! tracker_get $key; then df_fail "ticket: cannot read $key ($(df_last_error))"
+  elif [[ ${DF_TICKET_STATUS:l} == ${want_status:l} ]]; then df_skip "ticket: $key already '$DF_TICKET_STATUS'"
+  elif df_in_list "$DF_TICKET_STATUS" $STATUS_SKIP; then df_skip "ticket: $key is '$DF_TICKET_STATUS'; never moved back"
+  elif (( DF_DRY )); then df_dry "move $key: '$DF_TICKET_STATUS' -> '$want_status'"
+  else tracker_move $key "$want_status" && df_ok "ticket: $key -> $want_status" || df_fail "ticket: $key not moved ($(df_last_error))"
+  fi
+fi
+
+# ---- 11. time
+if [[ -z $log ]]; then :
+elif (( ! time_on )); then df_skip "time: not logged ($([[ $TIME_PROVIDER == none ]] && print 'no time tracker' || print 'no ticket key or skipped'))"
+else
+  df_use time
+  if ! entries=$(time_list $day); then df_fail "time: cannot read $day's worklogs; nothing logged ($(df_last_error))"
+  else
+    if [[ -z $start ]]; then  # a duration starts where the day's last entry ends
+      last=$(jq -r 'map((.start|split(":")|(.[0]|tonumber)*60+(.[1]|tonumber)) + (.secs/60|floor)) | max // empty' <<<$entries)
+      [[ -n $last ]] && (( last < 1440 )) && start=$(df_min_to_hhmm $last) || start=$DEFAULT_START
+    fi
+    if [[ $(jq --arg k $key --arg s $start --argjson n $secs 'any(.[]; .key==$k and .start==$s and .secs==$n)' <<<$entries) == true ]]; then
+      df_skip "time: $(df_fmt_duration $secs) on $key at $start already logged"
+    elif (( DF_DRY )); then df_dry "log $(df_fmt_duration $secs) on $key, $day $start ($SHIP_TIME_TYPE)"
+    else time_create $key $day $start $secs $SHIP_TIME_TYPE "$TLOG_DEFAULT_COMMENT" >/dev/null &&
+      df_ok "time: $(df_fmt_duration $secs) on $key, $day $start" || df_fail "time: not logged ($(df_last_error))"
+    fi
+  fi
+fi
+
+# ---- 12. message
+if (( DF_FAILED )); then df_skip "message not sent: a step failed"
+else
+  msg=$(df_fill "${SHIP_MESSAGE:-"{url}"}" url "$url" title "$title" branch $branch target $target ticket "$key" ticket_url "$turl")
+  df_post "$SHIP_POST_TO" "$msg"
+  (( DF_DRY )) || print -r -- "$msg"
+fi
+
+# ---- 13. post hook
+export JUSTCODE_URL=$url
+df_hook POST
+df_finish

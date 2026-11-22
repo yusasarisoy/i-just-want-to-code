@@ -1,0 +1,111 @@
+# justcode configuration (zsh syntax). Copy to ~/.config/justcode/config and
+# uncomment what you need. Every key is documented in references/config.md.
+# Layers, later wins: this file, <repo>/.justcode (team, needs `justcode trust`),
+# <repo>/.justcode.local (personal, needs trust), JUSTCODE_SET='KEY=value;...', flags.
+# Keys marked [personal] must never go into the team file.
+
+# ---- general
+# REPO_DIR=~/src/myapp                    # [personal] repo used outside a git checkout
+# TICKET_KEY_REGEX='[A-Za-z][A-Za-z0-9]+-[0-9]+'   # case-insensitive, upper-cased
+# TICKET_PREFIX=ABC                        # `tlog 123 ...` means ABC-123
+# DEFAULT_START=09:00                      # start of a duration log on an empty day
+# JUSTCODE_NOTIFY=1                         # desktop notifications
+# JUSTCODE_SOUNDS=1
+# NETWORK_WAIT_SECS=120                    # longest wait for a VPN host
+# JUSTCODE_COMMANDS=(ship tpull tlog tcheck ticket build vpn)
+# GIT_REMOTE=origin
+
+# ---- per command: SHIP TPULL TLOG TCHECK TICKET BUILD (and custom commands)
+# SHIP_DEFAULT_ARGS=(-a)                   # prepended to every call
+# SHIP_SKIP=(reviewers)                    # steps: description reviewers ci ticket time
+# SHIP_PRE_HOOK='make lint'                # runs with zsh -c in the repo root
+# SHIP_POST_HOOK=''
+# TPULL_POST_HOOK='npm ci'                 # after a successful update
+
+# ---- code host
+# CODE_PROVIDER=github                     # github | gitlab | bitbucket
+# CODE_API_URL=''                          # empty = derive from the remote
+# CODE_REPO=''                             # owner/name; empty = from the remote
+# CODE_USER=alice                          # [personal] required: the token must belong to it
+# CODE_TOKEN_SECRET=justcode-code-token     # [personal] secret entry name (`gh` = use the GitHub CLI)
+# TARGET_BRANCHES=(main)
+# PROTECTED_BRANCHES=(main 'release/*')
+# DEFAULT_REVIEWERS=(bob)
+# SHIP_LABELS=()
+# SHIP_PR_DESCRIPTION='{ticket_url}'       # set only when the description is empty
+# MERGE_METHOD=squash                      # squash | merge | rebase
+# CI_NUDGE_JOB=''                          # gitlab: play then cancel this manual job
+
+# ---- tracker
+# TRACKER_PROVIDER=none                    # jira-cloud | jira-dc | linear | none
+# TRACKER_URL=https://jira.example.com
+# TRACKER_USER=alice@example.com           # [personal] Jira Cloud email
+# TRACKER_TOKEN_SECRET=justcode-tracker-token   # [personal]
+# STATUS_MAP=( 'feature/*' 'In Review' 'bugfix/*' 'Ready for Test' )
+# STATUS_ON_SHIP='In Review'
+# STATUS_VIA=''                            # intermediate status when there is no direct transition
+# STATUS_SKIP=(Done Closed)                # never moved back from these
+# TICKET_PROJECT=ABC
+# TICKET_BOARD=''                          # board id, for sprints and estimates
+# TICKET_DEFAULT_TYPE=''
+# TICKET_DEFAULT_PRIORITY=''
+# TICKET_DEFAULT_COMPONENT=''
+# TICKET_DEFAULT_SPRINT=''
+# TICKET_FIELDS=('Team=Mobile')            # for every type
+# TICKET_FIELDS_BUG=('Severity=Minor')     # for type Bug only
+# TICKET_ESTIMATE_TYPES=(Story)            # these types need -P
+# TICKET_PREFER_CUSTOM_FIELDS=1
+# TICKET_SEPARATOR='---8<---'
+
+# ---- time
+# TIME_PROVIDER=none                       # tempo-cloud | tempo-dc | toggl | clockify | none
+# TIME_URL=''
+# TIME_USER=''                             # [personal] account id / worker key / user id
+# TIME_TOKEN_SECRET=justcode-time-token     # [personal]
+# TIME_WORKSPACE=''                        # toggl / clockify
+# DAY_TARGET_HOURS=8
+# WORK_DAYS=(1 2 3 4 5)                    # 1 = Monday
+# typeset -A TIME_TYPES=( code Development meeting Meeting )   # short name -> provider value
+# TIME_TYPE_ATTRIBUTE=''                   # Tempo work attribute key; empty = none
+# TLOG_DEFAULT_TYPE=code
+# SHIP_TIME_TYPE=code
+# TLOG_DEFAULT_COMMENT='Development'
+# TLOG_DAY_FULL_HOOK=''                    # runs when the day reaches DAY_TARGET_HOURS
+# DAY_LABELS=(Mon Tue Wed Thu Fri Sat Sun)
+
+# ---- build
+# DEPLOY_PROVIDER=none                     # testflight | play | command | none
+# APP_NAME=MyApp
+# BUILD_PROJECT_DIR=.
+# BUILD_OUTPUT_DIR=~/Builds
+# BUILD_KINDS=(qa beta)
+# BUILD_CONFIG=Release
+# XCODE_WORKSPACE=MyApp.xcworkspace        # or XCODE_PROJECT=MyApp.xcodeproj
+# XCODE_SCHEME_PATTERN='{app} {env} {config}'
+# ASC_KEY_ID='' ASC_ISSUER_ID='' ASC_KEY_PATH=''   # optional App Store Connect API key
+# GRADLE_TASK_PATTERN=':app:bundle{Env}Release'
+# PLAY_PACKAGE=com.example.myapp
+# PLAY_TRACK=internal
+# PLAY_JSON_KEY_SECRET=justcode-play-json-key   # [personal]
+# DEPLOY_COMMAND=''                        # command provider: builds and uploads
+
+# ---- VPN
+# VPN_PROVIDER=none                        # command | none (presets: references/network.md)
+# VPN_HOSTS=(jira.example.com)             # only these need the VPN
+# VPN_STATUS_CMD=''
+# VPN_UP_CMD=''
+# VPN_DOWN_CMD=''
+# VPN_APP=''                               # fallback: open this app and wait
+# VPN_WATCH_SECS=30
+
+# ---- messages: placeholders in references/messages.md
+# SHIP_MESSAGE='{url}'
+# SHIP_POST_TO=clipboard                   # comma list: clipboard,slack,teams,webhook,none
+# BUILD_MESSAGE='{env} {version} ({build}) {kind} build uploaded'
+# BUILD_POST_TO=clipboard
+# TICKET_MESSAGE='{url}'
+# TICKET_POST_TO=clipboard
+# SLACK_WEBHOOK_SECRET=justcode-slack-webhook   # [personal]
+# TEAMS_WEBHOOK_SECRET=justcode-teams-webhook   # [personal]
+# WEBHOOK_SECRET=justcode-webhook               # [personal]
+# TEAMS_PAYLOAD=text                       # text | adaptive-card

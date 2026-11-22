@@ -1,0 +1,95 @@
+#!/usr/bin/env zsh
+# tlog: log time on a ticket, or move an existing entry (-e).
+DF_ROOT=${0:A:h:h}; DF_CMD=tlog
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+
+usage() {
+  print -r -- "usage: tlog [-n] [-t type] <ticket> <start-end> [day] [comment]
+       tlog [-n] [-t type] -e <old start[-end]> <ticket> <new start-end> [day] [comment]
+  ticket   ABC-123, or a bare number with TICKET_PREFIX
+  range    9-10, 09:30-12:00
+  day      today (default), yesterday, YYYY-MM-DD, DD.MM.YYYY
+  -t       type: ${(j:, :)${(ok)TIME_TYPES}} (default $TLOG_DEFAULT_TYPE)
+  -e       move the entry that starts at <old start> (and ends at <old end>)
+  -n       dry run"
+}
+
+set -- "${TLOG_DEFAULT_ARGS[@]}" "$@"
+type='' old='' type_given=0
+while getopts ':t:e:nh' o; do
+  case $o in
+    t) type=$OPTARG type_given=1 ;; e) old=$OPTARG ;; n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    :) df_die "-$OPTARG needs a value (tlog -h)" ;;
+    *) df_die "unknown option -$OPTARG (tlog -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# >= 2 )) || { usage >&2; exit 1 }
+
+[[ $TIME_PROVIDER != none ]] || df_die "no time tracker configured (TIME_PROVIDER=none)"
+key=$(df_ticket_key $1) || df_die "'$1' is not a ticket key"
+range=$(df_parse_range $2) || df_die "bad range '$2' (9-10, 09:30-12:00; end after start)"
+s=${range% *} e=${range#* }
+start=$(df_min_to_hhmm $s) secs=$(( (e - s) * 60 ))
+if day=$(df_parse_day "${3:-today}"); then comment=${(j: :)@[4,-1]}
+else day=$(df_today) comment=${(j: :)@[3,-1]}
+fi
+type=${type:-$TLOG_DEFAULT_TYPE}
+(( ${#TIME_TYPES} == 0 )) || (( ${+TIME_TYPES[$type]} )) || df_die "unknown type '$type' (known: ${(j:, :)${(ok)TIME_TYPES}})"
+
+df_use time
+df_wait_for_host "$TIME_URL" || df_finish
+[[ $TIME_PROVIDER == tempo-cloud ]] && { df_wait_for_host "$TRACKER_URL" || df_finish }
+df_hook PRE
+
+entries=$(time_list $day) || df_die "cannot read $day's worklogs ($(df_last_error)); nothing logged"
+list_key() { jq -r --arg k $key "map(select(.key==\$k))[] | \"  \(.start) \(.secs/60|floor)m \(.comment)\"" <<<$entries >&2 }
+
+if [[ -n $old ]]; then
+  os=$(df_to_min ${old%%-*}) || df_die "bad old start '$old'"
+  osecs=null
+  if [[ $old == *-* ]]; then r=$(df_parse_range $old) || df_die "bad old range '$old'"; osecs=$(( (${r#* } - ${r% *}) * 60 )); fi
+  matches=$(jq -c --arg k $key --arg s $(df_min_to_hhmm $os) --argjson n $osecs \
+    'map(select(.key==$k and .start==$s and ($n==null or .secs==$n)))' <<<$entries)
+  case $(jq length <<<$matches) in
+    0) df_skip "no $key entry at $old on $day; $key entries that day:"; list_key; exit 1 ;;
+    1) ;;
+    *) df_skip "more than one $key entry starts at $old on $day; give the end too (-e start-end):"; list_key; exit 1 ;;
+  esac
+  entry=$(jq -c '.[0]' <<<$matches)
+  id=$(jq -r .id <<<$entry)
+  clash=''
+  for line in ${(f)"$(jq -r --arg id $id 'map(select(.id != $id))[] | "\(.start) \(.secs) \(.key)"' <<<$entries)"}; do
+    o1=$(df_to_min ${line%% *}) rest=${line#* }
+    df_overlaps $s $e $o1 $(( o1 + ${rest%% *} / 60 )) && { clash="${rest#* } at ${line%% *}"; break }
+  done
+  [[ -z $clash ]] || df_die "moving to $2 would overlap $clash on $day; nothing changed"
+  [[ -n $comment ]] || comment=$(jq -r .comment <<<$entry)
+  [[ -n $comment ]] || comment=$TLOG_DEFAULT_COMMENT
+  if (( ! type_given )); then old_type=$(jq -r '.type // empty' <<<$entry); type=${old_type:-$type}; fi
+  if [[ $(jq -r .start <<<$entry) == $start && $(jq -r .secs <<<$entry) == $secs ]]; then
+    df_skip "$key already at $start for $(df_fmt_duration $secs)"; df_finish
+  fi
+  if (( DF_DRY )); then df_dry "move $key $day $(jq -r .start <<<$entry) -> $start ($(df_fmt_duration $secs), $type)"; df_finish; fi
+  time_update $id $key $day $start $secs $type "$comment" || df_die "move failed ($(df_last_error))"
+  df_ok "moved $key on $day to $start ($(df_fmt_duration $secs))"
+else
+  comment=${comment:-$TLOG_DEFAULT_COMMENT}
+  if [[ $(jq --arg k $key --arg s $start --argjson n $secs 'any(.[]; .key==$k and .start==$s and .secs==$n)' <<<$entries) == true ]]; then
+    df_skip "$(df_fmt_duration $secs) on $key at $start on $day already logged"; df_finish
+  fi
+  if (( DF_DRY )); then df_dry "log $(df_fmt_duration $secs) on $key, $day $start ($type): $comment"; df_finish; fi
+  time_create $key $day $start $secs $type "$comment" >/dev/null || df_die "not logged ($(df_last_error))"
+  df_ok "logged $(df_fmt_duration $secs) on $key, $day $start ($type)"
+fi
+
+if total=$(time_day_total $day) && [[ -n $total ]]; then
+  df_info "$day total: $(df_fmt_duration $total) of ${DAY_TARGET_HOURS}h"
+  if (( total >= DAY_TARGET_HOURS * 3600 )) && [[ -n $TLOG_DAY_FULL_HOOK ]]; then
+    ( cd "${DF_REPO:-.}" && JUSTCODE_DAY=$day JUSTCODE_TOTAL_SECS=$total zsh -c "$TLOG_DAY_FULL_HOOK" ) &&
+      df_ok "day-full hook" || df_skip "day-full hook failed (the time is logged)"
+  fi
+fi
+df_hook POST
+df_finish
