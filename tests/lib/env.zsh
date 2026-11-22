@@ -16,9 +16,17 @@ p_init() {
   git config --global user.email tester@example.com
   git config --global init.defaultBranch main
   export PATH=$TESTS/shims:$RUNTIME/bin:$PATH
-  python3 $TESTS/mock/server.py --port 0 --port-file $T/port --log $SHIM_STATE/requests.log &
+  python3 $TESTS/mock/server.py --port 0 --port-file $T/port --log $SHIM_STATE/requests.log 2>$T/mock.err &
   MOCK_PID=$!
-  repeat 100; do [[ -s $T/port ]] && break; sleep 0.05; done
+  # Shared CI runners can take seconds to start python; 20s, and stop if the server died.
+  repeat 400; do [[ -s $T/port ]] || ! kill -0 $MOCK_PID 2>/dev/null && break; sleep 0.05; done
+  if [[ ! -s $T/port ]]; then
+    print -r -- "FAIL  mock server did not start; its stderr:"
+    cat $T/mock.err
+    print -r -- "RESULT pass=0 fail=1 skip=0"
+    kill $MOCK_PID 2>/dev/null; rm -rf $T
+    exit 1
+  fi
   MOCK=http://127.0.0.1:$(<$T/port)
   : >$SHIM_STATE/requests.log
   : >$SHIM_STATE/curl.argv
