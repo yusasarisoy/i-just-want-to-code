@@ -6,7 +6,7 @@ emulate zsh
 setopt extended_glob pipe_fail
 zmodload zsh/datetime
 
-DF_VERSION=0.2.0
+DF_VERSION=0.3.0
 : ${DF_ROOT:=${${(%):-%x}:A:h:h}}
 DF_LIB=$DF_ROOT/lib
 typeset -gi DF_FAILED=0 DF_DRY=0
