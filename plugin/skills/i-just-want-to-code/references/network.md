@@ -19,7 +19,7 @@ It never hangs: the wait is bounded even when the connect command itself blocks.
 | `VPN_DOWN_CMD` | disconnects |
 | `VPN_STATUS_CMD` | exits 0 when connected; empty = judge by the hosts only |
 | `VPN_APP` | app to open when there is no connect command |
-| `VPN_HOSTS` | hosts that need the VPN, e.g. `(jira.example.com git.example.com)` |
+| `VPN_HOSTS` | hosts that need the VPN, e.g. `(jira.example.com git.example.com)`; a pattern such as `*.example.com` is probed as `x.example.com` |
 
 ## Presets
 None of these is a default. Each one is **verify on your machine**: install paths, profile names and whether the command needs `sudo` vary by version and OS. Replace `vpn.example.com` and profile names with your own.

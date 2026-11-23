@@ -72,5 +72,10 @@ if (( rc != 99 )); then
   t_lacks "team file has no personal key" "$(<$T/work/.justcode)" CODE_USER
   t_has "team file got the team key" "$(<$T/work/.justcode)" "CODE_API_URL=$MOCK/github"
   t_has "global file got the personal key" "$(<$HOME/.config/justcode/config)" "CODE_USER=carol"
+  print -l '' "$MOCK/github/v3" carol '' '' '' '' >$T/answers-t2
+  pty_run $T/answers-t2 code --layer team >/dev/null 2>&1
+  t_has "team file rewritten" "$(<$T/work/.justcode)" "CODE_API_URL=$MOCK/github/v3"
+  t_eq "rewrite leaves no backup in the repo" "$(print -l $T/work/.justcode.bak*(N))" ""
+  t_has "rewrite backs up the old team file in the config dir" "$(cat $HOME/.config/justcode/backups/*justcode.* 2>/dev/null)" "CODE_API_URL=$MOCK/github"
 fi
 t_done

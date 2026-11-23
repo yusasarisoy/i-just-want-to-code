@@ -56,7 +56,14 @@ cleanup() {
 # ---- source ref
 if (( snap )); then
   sref=refs/justcode/builds/$env-$version-$bnum
-  sha=$(git stash create 2>/dev/null); [[ -n $sha ]] || sha=$(git rev-parse HEAD)
+  # A throwaway index, so new files that were never added are in the snapshot too (git stash create skips them).
+  idx=$(mktemp)
+  cp "$(git -C $DF_REPO rev-parse --path-format=absolute --git-path index)" $idx 2>/dev/null || rm -f $idx  # no index yet: git makes one
+  stree=$(GIT_INDEX_FILE=$idx git -C $DF_REPO add -A && GIT_INDEX_FILE=$idx git -C $DF_REPO write-tree); rm -f $idx
+  [[ -n $stree ]] || df_die "snapshot failed: cannot read the working tree"
+  if [[ $stree == $(git -C $DF_REPO rev-parse HEAD^{tree}) ]]; then sha=$(git -C $DF_REPO rev-parse HEAD)
+  else sha=$(git -C $DF_REPO commit-tree $stree -p HEAD -m "justcode build snapshot") || df_die "snapshot failed"
+  fi
   if (( DF_DRY )); then df_dry "snapshot working tree to $sref"
   else git update-ref $sref $sha && df_ok "snapshot $sref" || df_die "snapshot failed"
   fi

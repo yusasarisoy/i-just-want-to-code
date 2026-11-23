@@ -15,6 +15,9 @@ MOCK_FAIL_FILE (re-read on every request) or an X-Mock-Fail header:
   merge-now     pull/merge requests report that they can merge immediately
   search-fails  ticket searches answer 500
   draft         existing pull requests are drafts
+  state-unknown GitHub pull requests report mergeable_state "unknown" (just created)
+  preparing-briefly GitLab merge requests are "preparing" with no pipeline for 1 s after the first read
+  logged-10     Tempo also lists a 1h ABC-123 worklog at 10:00 (what a first "ship -l 1h" wrote)
 """
 import argparse
 import json
@@ -28,6 +31,7 @@ from urllib.parse import urlsplit, parse_qs, unquote
 
 ARGS = None
 LOCK = threading.Lock()
+SEEN = {}  # first-seen times, for switches whose answer changes over time
 USER = os.environ.get("MOCK_USER", "alice")
 HOST = "https://git.example.com"
 
@@ -150,7 +154,10 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "/pulls" and m == "POST":
             return 201, pull(draft=bool(b.get("draft")))
         if re.match(r"^/pulls/\d+$", rest):
-            return pull(merge_now="merge-now" in sw, draft="draft" in sw)
+            pr = pull(merge_now="merge-now" in sw, draft="draft" in sw)
+            if "state-unknown" in sw:
+                pr["mergeable_state"] = "unknown"
+            return pr
         if rest.endswith("/requested_reviewers"):
             return 201, pull(reviewers=b.get("reviewers"))
         if rest.endswith("/labels"):
@@ -174,7 +181,13 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "/merge_requests" and m == "POST":
             return 201, mr(draft=b.get("title", "").startswith("Draft:"))
         if re.match(r"^/merge_requests/\d+(/merge)?$", rest):
-            return mr(merge_now="merge-now" in sw, draft="draft" in sw)
+            out = mr(merge_now="merge-now" in sw, draft="draft" in sw)
+            if "preparing-briefly" in sw and m == "GET":
+                with LOCK:
+                    since = SEEN.setdefault("preparing-briefly", time.monotonic())
+                if time.monotonic() - since < 1:
+                    out.update({"detailed_merge_status": "preparing", "head_pipeline": None})
+            return out
         if rest == "/pipelines":
             return [{"id": 11, "sha": q.get("sha"), "status": "skipped"}]
         if rest.startswith("/pipelines/11/jobs"):
@@ -284,8 +297,11 @@ class Handler(BaseHTTPRequestHandler):
         p = p.removeprefix("/4")
         if p.startswith("/worklogs/user/"):
             day = q.get("from", "2026-01-05")
-            return {"results": [{"tempoWorklogId": 1, "issue": {"id": 101}, "startDate": day, "startTime": "09:00:00",
-                                 "timeSpentSeconds": 3600, "description": "Development", "attributes": {"values": []}}]}
+            rows = [{"tempoWorklogId": 1, "issue": {"id": 101}, "startDate": day, "startTime": "09:00:00",
+                     "timeSpentSeconds": 3600, "description": "Development", "attributes": {"values": []}}]
+            if "logged-10" in sw:
+                rows.append({**rows[0], "tempoWorklogId": 2, "startTime": "10:00:00"})
+            return {"results": rows}
         if p == "/worklogs" and m == "POST":
             return 200, {"tempoWorklogId": 2}
         if re.match(r"^/worklogs/\d+$", p):

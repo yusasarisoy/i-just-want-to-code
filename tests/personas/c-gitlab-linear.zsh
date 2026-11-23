@@ -37,6 +37,11 @@ POST /gitlab/api/v4/projects/alice%2Fmyapp/jobs/21/play
 POST /gitlab/api/v4/projects/alice%2Fmyapp/jobs/21/cancel
 PUT /gitlab/api/v4/projects/alice%2Fmyapp/merge_requests/7/merge
 POST /linear/graphql"
+p_fail preparing-briefly
+p_mark; p_run ship -a
+t_has "new MR still preparing: auto-merge enabled after a re-read" "$OUT" "✓ auto-merge enabled"
+t_has "new MR still preparing: merge-when-pipeline-succeeds sent" "$(p_writes)" "merge_requests/7/merge"
+p_fail ''
 
 print "tlog, tcheck, ticket, build"
 p_mark; p_run tlog -n ENG-42 14-15

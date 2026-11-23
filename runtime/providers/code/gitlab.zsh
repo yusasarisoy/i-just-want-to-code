@@ -76,8 +76,13 @@ code_add_reviewers() {
 
 # 0 = set to merge when the pipeline succeeds; 2 = would merge now or state unknown.
 code_auto_merge() {
-  local mr state; mr=$(_gl_mr $1) || return 1
-  state=$(jq -r .merge_state <<<$mr)
+  local mr state try
+  for try in 1 2 3 4 5; do  # a new MR is still being checked and may have no pipeline yet: ask again, at most ~8 s
+    mr=$(_gl_mr $1) || return 1
+    state=$(jq -r .merge_state <<<$mr)
+    [[ $state == (unchecked|checking|preparing|unknown|) || $(jq -r .has_pipeline <<<$mr) == false ]] || break
+    (( try < 5 )) && sleep 2
+  done
   if [[ $state == (mergeable|can_be_merged|unchecked|checking|preparing|unknown|) || $(jq -r .has_pipeline <<<$mr) == false ]]; then
     df_skip "auto-merge not enabled: merge state is '$state' (would merge immediately or unknown)"
     return 2

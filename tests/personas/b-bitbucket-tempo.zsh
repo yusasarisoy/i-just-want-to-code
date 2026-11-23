@@ -44,6 +44,17 @@ p_run ship -n -l 9-10
 t_has "duplicate worklog is skipped" "$OUT" "• time: 1h on ABC-123 at 09:00 already logged"
 p_run ship -n -l 1h
 t_has "a duration starts after the day's last entry" "$OUT" "$today 10:00"
+p_mark; p_run ship -l 1h
+t_has "first ship -l 1h logs at 10:00" "$OUT" "✓ time: 1h on ABC-123, $today 10:00"
+p_fail logged-10
+p_mark; p_run ship -l 1h
+t_eq "ship -l 1h re-run exits 0" $RC 0
+t_has "ship -l 1h re-run finds its own entry" "$OUT" "• time: 1h on ABC-123 at 10:00 already logged"
+t_lacks "ship -l 1h re-run logs nothing" "$(p_writes)" "/worklogs"
+git commit -q --allow-empty -m "More work"
+p_run ship -n -l 1h
+t_has "ship -l 1h after a new commit is new work" "$OUT" "[dry-run] log 1h on ABC-123, $today 11:00"
+p_fail ''
 p_fail 500@/worklogs/user
 p_mark; p_run ship -l 10-11
 t_eq "time list fails: exit 1" $RC 1
@@ -58,6 +69,12 @@ t_eq "tlog -n exits 0" $RC 0
 t_eq "tlog -n sends no writes" "$(p_writes)" ""
 p_run tlog -n ABC-123 9-10
 t_has "tlog duplicate skipped" "$OUT" "already logged"
+p_mark; p_run tlog ABC-123 10-11 2026-11-31
+t_eq "tlog impossible date stops" $RC 1
+t_has "tlog impossible date: clear message" "$OUT" "bad day '2026-11-31'"
+t_eq "tlog impossible date logs nothing" "$(p_writes)" ""
+p_run tlog -n ABC-123 10-11 2.5x review
+t_has "tlog comment starting with a number stays a comment" "$OUT" "[dry-run] log"
 p_run tlog -n -e 9 ABC-123 11-12
 t_has "tlog -e plans the move" "$OUT" "[dry-run] move ABC-123 $today 09:00 -> 11:00"
 p_run tlog -n -e 14 ABC-123 15-16

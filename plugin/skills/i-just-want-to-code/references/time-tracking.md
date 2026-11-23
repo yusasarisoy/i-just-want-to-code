@@ -10,7 +10,7 @@ Provider files: `runtime/providers/time/<name>.zsh`. Contract:
 | `time_day_total <day>`, `time_week_totals <from> <to>` | seconds |
 | `time_doctor` | read-only self-check |
 
-`TIME_TYPES` maps a short name (`code`, `meeting`) to the provider's value. tlog refuses an entry that overlaps an existing one; a duration (`ship -l 1h30m`) starts at the end of the day's last entry, or at `DEFAULT_START`.
+`TIME_TYPES` maps a short name (`code`, `meeting`) to the provider's value. tlog refuses an entry that overlaps an existing one; a duration (`ship -l 1h30m`) starts at the end of the day's last entry, or at `DEFAULT_START`; re-running ship on the same commit finds the entry it logged before (recorded in `.git/justcode/ship-time`) instead of logging it again. tlog stops on a date-shaped day it cannot read (`2026-11-31`).
 
 ## Tempo Cloud (`tempo-cloud`)
 - API `https://api.tempo.io/4`, Tempo API token (Tempo settings, API integration) as Bearer.

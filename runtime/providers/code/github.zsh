@@ -73,12 +73,13 @@ code_add_reviewers() {
     "$(jq -nc '{reviewers:$ARGS.positional}' --args $new)"
 }
 
-# 0 = auto-merge set; 2 = would merge immediately or state unknown (no merge call).
+# 0 = auto-merge set; 2 = would merge immediately (no merge call).
 code_auto_merge() {
   local pr state; pr=$(_gh_pull $1) || return 1
   state=$(jq -r .merge_state <<<$pr)
   case $state in
-    blocked|behind|dirty|draft) ;;
+    # unknown: a new PR is still being checked; enabling auto-merge never merges, and a clean PR is refused below.
+    blocked|behind|dirty|draft|unknown) ;;
     *) df_skip "auto-merge not enabled: merge state is '$state' (would merge immediately or unknown)"; return 2 ;;
   esac
   _gh_graphql "$(jq -nc --arg id "$(jq -r .node_id <<<$pr)" --arg mm ${MERGE_METHOD:u} \

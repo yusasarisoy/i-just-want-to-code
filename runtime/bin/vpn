@@ -11,9 +11,10 @@ usage() {
 }
 
 df_use vpn
+host_up() { df_host_reachable "https://${1//\*/x}" }  # a wildcard host (*.example.com) is probed as x.example.com
 hosts_up() {  # 0 when every VPN host answers
   local h
-  for h in $VPN_HOSTS; do df_host_reachable "https://${h//\*/x}" || return 1; done
+  for h in $VPN_HOSTS; do host_up $h || return 1; done
   return 0
 }
 
@@ -24,7 +25,7 @@ case ${1:-status} in
     vpn_status; rc=$?
     (( rc == 0 )) && df_ok "vpn: connected" || { (( rc == 3 )) || df_fail "vpn: not connected" }
     for h in $VPN_HOSTS; do
-      df_host_reachable "https://$h" && df_ok "$h reachable" || df_fail "$h not reachable"
+      host_up $h && df_ok "$h reachable" || df_fail "$h not reachable"
     done
     df_finish ;;
   up) vpn_up && df_ok "vpn up" || df_die "vpn up failed" ;;

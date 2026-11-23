@@ -33,6 +33,7 @@ range=$(df_parse_range $2) || df_die "bad range '$2' (9-10, 09:30-12:00; end aft
 s=${range% *} e=${range#* }
 start=$(df_min_to_hhmm $s) secs=$(( (e - s) * 60 ))
 if day=$(df_parse_day "${3:-today}"); then comment=${(j: :)@[4,-1]}
+elif [[ $3 == [0-9]##[-.][0-9]##[-.][0-9]## ]]; then df_die "bad day '$3' (today, yesterday, YYYY-MM-DD, DD.MM.YYYY)"
 else day=$(df_today) comment=${(j: :)@[3,-1]}
 fi
 type=${type:-$TLOG_DEFAULT_TYPE}

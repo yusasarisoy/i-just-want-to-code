@@ -61,9 +61,12 @@ t_ok "trusted .justcode executed" test -e $T/team-marker
 rm -f .justcode
 
 print "ship for real"
-p_mark; p_run ship -a
+p_mark; p_run env JUSTCODE_SET='SHIP_MESSAGE={url} {ticket_url};SHIP_PR_DESCRIPTION=Ticket: {ticket_url}' ship -a
 t_eq "real ship exits 0" $RC 0
+t_has "ticket_url filled in the PR description" "$(grep '^PATCH /github/repos/alice/myapp/pulls/7 ' $SHIM_STATE/requests.log)" "Ticket: $MOCK/jira-cloud/browse/ABC-123"
+t_has "ticket_url filled in the team message" "$(grep '^POST /hooks/slack' $SHIM_STATE/requests.log)" "/jira-cloud/browse/ABC-123"
 t_eq "real ship makes exactly the expected writes" "$(p_writes)" "POST /github/repos/alice/myapp/pulls
+PATCH /github/repos/alice/myapp/pulls/7
 POST /github/repos/alice/myapp/issues/7/labels
 POST /github/repos/alice/myapp/pulls/7/requested_reviewers
 POST /github/graphql
@@ -75,6 +78,10 @@ p_mark; p_run ship -a
 t_eq "would merge immediately: exit 0" $RC 0
 t_has "would merge immediately: skip line" "$OUT" "• auto-merge not enabled: merge state is 'clean'"
 t_lacks "would merge immediately: no merge call" "$(p_writes)" "/graphql"
+p_fail state-unknown
+p_mark; p_run ship -a
+t_has "new PR (state unknown): auto-merge enabled" "$OUT" "✓ auto-merge enabled"
+t_has "new PR (state unknown): mutation sent" "$(p_writes)" "POST /github/graphql"
 p_fail ''
 
 print "tickets"
@@ -113,6 +120,14 @@ t_has "build -n plans the archive" "$OUT" "xcodebuild -workspace MyApp.xcworkspa
 t_has "build -n plans the upload" "$OUT" "-exportArchive"
 t_has "build -n shows the message" "$OUT" "test 1.2.3 (7) qa build uploaded"
 t_lacks "build -n ran no xcodebuild" "$(<$SHIM_STATE/calls.log)" "xcodebuild"
+print -r -- "new" >never-added.txt
+print -r -- "changed" >>login.txt
+p_run build -w test 1.2.3 8
+t_eq "build -w snapshot has the file that was never added" "$(git show refs/justcode/builds/test-1.2.3-8:never-added.txt 2>&1)" "new"
+t_has "build -w snapshot has the tracked change" "$(git show refs/justcode/builds/test-1.2.3-8:login.txt 2>&1)" "changed"
+t_eq "build -w leaves the real index alone" "$(git status --porcelain)" " M login.txt
+?? never-added.txt"
+git checkout -q login.txt; rm -f never-added.txt
 p_run justcode doctor
 t_eq "doctor passes" $RC 0
 p_run justcode config

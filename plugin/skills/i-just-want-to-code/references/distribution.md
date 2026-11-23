@@ -9,7 +9,7 @@ Provider files: `runtime/providers/deploy/<name>.zsh`. Contract:
 | `deploy_last_build_number` | highest uploaded build number, used when `build` gets no number |
 | `deploy_doctor` | read-only self-check |
 
-`build <env> [version] [build]` checks out the ref (`-b`, default HEAD; `-w` snapshots uncommitted work) into a temporary worktree, builds, uploads, then posts `BUILD_MESSAGE`. **Claude never runs `build`**; it prints the command for the user.
+`build <env> [version] [build]` checks out the ref (`-b`, default HEAD; `-w` snapshots uncommitted work, files never added included, without touching the index) into a temporary worktree, builds, uploads, then posts `BUILD_MESSAGE`. **Claude never runs `build`**; it prints the command for the user.
 
 ## TestFlight (`testflight`)
 - `xcodebuild archive` with `XCODE_WORKSPACE` or `XCODE_PROJECT` and the scheme from `XCODE_SCHEME_PATTERN`, then `-exportArchive` with an export options plist whose destination is `upload`.

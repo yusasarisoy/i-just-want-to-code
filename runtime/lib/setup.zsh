@@ -389,7 +389,9 @@ df_setup_main() {
     diff -u $old $tmp | tail -n +3
     if (( dry )); then rm -f $tmp; continue; fi
     mkdir -p ${f:h}
-    [[ -f $f ]] && cp $f $f.bak.$(df_date %Y%m%d-%H%M%S)
+    # Backups go to the personal config dir, never into the repo where they could be committed.
+    [[ -f $f ]] && mkdir -p $DF_CONFIG_DIR/backups &&
+      cp $f $DF_CONFIG_DIR/backups/${${f#$HOME/}//\//_}.$(df_date %Y%m%d-%H%M%S)
     cp $tmp $f; rm -f $tmp
     df_ok "wrote $f"
     if [[ $f == $DF_REPO/.justcode.local ]] && ! grep -qxF .justcode.local $DF_REPO/.gitignore 2>/dev/null; then

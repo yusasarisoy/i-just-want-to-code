@@ -20,7 +20,7 @@ branch=$(git symbolic-ref --short -q HEAD) || df_die "detached HEAD"
 up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null) || df_die "$branch has no upstream (git push -u)"
 remote=${up%%/*}
 
-df_wait_for_host "https://$(df_remote_host)" || df_finish
+df_wait_for_host "https://$(GIT_REMOTE=$remote df_remote_host)" || df_finish
 df_hook PRE
 git fetch -q $remote || df_die "git fetch $remote failed"
 df_ok "fetched $remote"

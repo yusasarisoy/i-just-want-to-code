@@ -46,6 +46,10 @@ t_has "ship -n saw the host come up" "$OUT" "✓ 127.0.0.1:$Q is reachable"
 t_eq "ship -n sends no writes" "$(p_writes)" ""
 t_has "plans the Jira DC move" "$OUT" "[dry-run] move ABC-123"
 t_has "plans the Tempo DC log" "$OUT" "[dry-run] log 1h on ABC-123, $today 10:00"
+: >$SHIM_STATE/curl.argv
+p_run env JUSTCODE_SET="VPN_HOSTS=*.corp.example" vpn status
+t_has "vpn status probes a wildcard host like vpn watch" "$(<$SHIM_STATE/curl.argv)" "https://x.corp.example/"
+t_lacks "vpn status never sends a literal * to curl" "$(<$SHIM_STATE/curl.argv)" "*.corp.example"
 p_mark; p_run tlog -n ABC-123 10-11
 t_eq "tlog -n sends no writes" "$(p_writes)" ""
 p_run tcheck
@@ -69,6 +73,13 @@ took=$(( EPOCHSECONDS - start ))
 t_eq "no wait hang: ship -n fails" $RC 1
 t_has "no wait hang: names the host" "$OUT" "127.0.0.1:$Q is still not reachable after 3s"
 (( took <= 8 )) && t_pass "no wait hang: ended in ${took}s (limit 3s + checks)" || t_failed "no wait hang" "took ${took}s"
+
+print "tpull waits for the upstream's host, not origin's"
+git remote add fork https://127.0.0.1:$Q/alice/myapp.git
+git config --add url.$T/origin.git.insteadOf https://127.0.0.1:$Q/alice/myapp.git
+git fetch -q fork && git branch -q -u fork/main
+p_run tpull -n
+t_has "tpull checks the upstream remote's host" "$OUT" "127.0.0.1:$Q is not reachable; starting the VPN"
 
 t_lacks "no secret value in any curl argv" "$(<$SHIM_STATE/curl.argv)" fake-secret
 t_done

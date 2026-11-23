@@ -20,12 +20,12 @@ Remotes understood: `https://host[:port]/owner/name(.git)`, `git@host:owner/name
 - REST v3 for everything, GraphQL for draft toggles and auto-merge (`enablePullRequestAutoMerge`).
 - API URL: `https://api.github.com`; GitHub Enterprise: `https://<host>/api/v3`.
 - Token: fine-grained token with Pull requests read/write and Contents read, or a classic token with `repo`. `CODE_TOKEN_SECRET=gh` reuses the GitHub CLI login.
-- Auto-merge needs "Allow auto-merge" in the repository settings; when the PR is already mergeable GitHub would merge at once, so justcode returns 2 and leaves it.
+- Auto-merge needs "Allow auto-merge" in the repository settings; when the PR is already mergeable GitHub would merge at once, so justcode returns 2 and leaves it. A new PR whose state is still `unknown` gets auto-merge; GitHub refuses it if the PR turns out to be mergeable already.
 
 ## GitLab (`gitlab`)
 - REST v4, gitlab.com or self-hosted (`https://<host>/api/v4`, derived from the remote).
 - Token: personal or project access token with scope `api`, sent as `PRIVATE-TOKEN`.
-- Auto-merge is "merge when pipeline succeeds"; without a running pipeline justcode returns 2.
+- Auto-merge is "merge when pipeline succeeds"; a new MR that is still being checked or has no pipeline yet is read again for up to ~8 s; still without a running pipeline, justcode returns 2.
 - `CI_NUDGE_JOB`: name of a manual job that ship plays and cancels at once, so a pipeline that would wait on it settles as passed with warnings. Off by default.
 
 ## Bitbucket Cloud (`bitbucket`)

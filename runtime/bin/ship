@@ -60,6 +60,7 @@ else key=$(df_ticket_from_branch $branch)
 fi
 typeset -i ticket_on=0 time_on=0
 [[ $TRACKER_PROVIDER != none && -n $key ]] && ! df_step_off ticket && ticket_on=1
+(( ticket_on )) && df_use tracker  # tracker_url is needed for {ticket_url} long before the ticket step
 [[ -n $log && $TIME_PROVIDER != none && -n $key ]] && ! df_step_off time && time_on=1
 if [[ -n $log ]]; then
   day=$(df_parse_day "$day") || df_die "bad day '$day' (today, yesterday, YYYY-MM-DD, DD.MM.YYYY)"
@@ -188,7 +189,6 @@ elif [[ -z $key ]]; then df_skip "ticket: no key in '$branch'"
 elif df_step_off ticket; then df_skip "ticket: skipped"
 elif (( opt_D )); then df_skip "ticket: draft, $key left as it is"
 else
-  df_use tracker
   want_status=$(df_status_for_branch $branch)
   if ! tracker_get $key; then df_fail "ticket: cannot read $key ($(df_last_error))"
   elif [[ ${DF_TICKET_STATUS:l} == ${want_status:l} ]]; then df_skip "ticket: $key already '$DF_TICKET_STATUS'"
@@ -205,15 +205,25 @@ else
   df_use time
   if ! entries=$(time_list $day); then df_fail "time: cannot read $day's worklogs; nothing logged ($(df_last_error))"
   else
-    if [[ -z $start ]]; then  # a duration starts where the day's last entry ends
+    typeset -i duration=0
+    if [[ -z $start ]]; then
+      duration=1
+      # A duration has no start of its own, so each one is recorded per HEAD; a re-run of the same ship finds it again.
+      stamps=$(git rev-parse --git-path justcode/ship-time) rec="$day $key $secs $(git rev-parse HEAD)"
+      prev=$(awk -v r="$rec " 'index($0, r) == 1 { s = $5 } END { print s }' $stamps 2>/dev/null)
+      [[ -n $prev && $(jq --arg k $key --arg s $prev 'any(.[]; .key==$k and .start==$s)' <<<$entries) == true ]] && start=$prev
+    fi
+    if [[ -z $start ]]; then  # a new duration starts where the day's last entry ends
       last=$(jq -r 'map((.start|split(":")|(.[0]|tonumber)*60+(.[1]|tonumber)) + (.secs/60|floor)) | max // empty' <<<$entries)
       [[ -n $last ]] && (( last < 1440 )) && start=$(df_min_to_hhmm $last) || start=$DEFAULT_START
     fi
     if [[ $(jq --arg k $key --arg s $start --argjson n $secs 'any(.[]; .key==$k and .start==$s and .secs==$n)' <<<$entries) == true ]]; then
       df_skip "time: $(df_fmt_duration $secs) on $key at $start already logged"
     elif (( DF_DRY )); then df_dry "log $(df_fmt_duration $secs) on $key, $day $start ($SHIP_TIME_TYPE)"
-    else time_create $key $day $start $secs $SHIP_TIME_TYPE "$TLOG_DEFAULT_COMMENT" >/dev/null &&
-      df_ok "time: $(df_fmt_duration $secs) on $key, $day $start" || df_fail "time: not logged ($(df_last_error))"
+    elif time_create $key $day $start $secs $SHIP_TIME_TYPE "$TLOG_DEFAULT_COMMENT" >/dev/null; then
+      df_ok "time: $(df_fmt_duration $secs) on $key, $day $start"
+      (( duration )) && mkdir -p ${stamps:h} && print -r -- "$rec $start" >>$stamps
+    else df_fail "time: not logged ($(df_last_error))"
     fi
   fi
 fi
