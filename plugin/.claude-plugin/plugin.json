@@ -1,7 +1,7 @@
 {
   "name": "i-just-want-to-code",
   "version": "0.2.0",
-  "description": "One-command engineering workflow on any stack: ship a branch (PR/MR, reviewers, auto-merge, ticket status, time log, team message), safe pull, time logging and weekly check, tickets from drafts, build and distribute, VPN wait, and your own custom commands. Claude sets it up for your tools; every value, step, hook and message is configurable, with dry runs, trusted repo config and OS-keychain secrets. Tokens are sent only to the service they belong to. Needs the justcode shell runtime (macOS or Linux), installed from the repository.",
+  "description": "One-command engineering workflow on any stack: ship a branch (PR/MR, reviewers, auto-merge, ticket status, time log, team message), safe pull, time logging and weekly check, tickets from drafts, build and distribute, VPN wait, and your own custom commands. Claude sets it up for your tools; every value, step, hook and message is configurable, with dry runs, trusted repo config and OS-keychain secrets. Tokens are sent only to the service they belong to. Needs the justcode shell runtime (macOS or Linux): Claude fetches the matching release from the repository, shows a dry run and installs it only after you approve.",
   "keywords": [
     "git",
     "pull-request",

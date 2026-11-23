@@ -80,7 +80,9 @@ Two parts: the **plugin** (the skill that teaches Claude justcode) and the **run
 
 **Claude app:** from the plugin directory, once i-just-want-to-code is listed there.
 
-**2. Runtime.** Clone the repo, read `runtime/install.sh` if you like, then run it (`-n` first shows what it would do):
+**2. Runtime.** Ask Claude to "set up justcode". It fetches the release that matches the plugin version into `~/.local/share/justcode-src`, shows what `install.sh -n` would do and installs only after you say yes. When the plugin updates, Claude offers the matching runtime update the same way.
+
+Without Claude: clone the repo, read `runtime/install.sh` if you like, then run it (`-n` first shows what it would do):
 
 ```bash
 git clone https://github.com/yusasarisoy/i-just-want-to-code.git
@@ -97,7 +99,7 @@ Ask Claude:
 
 > set up justcode
 
-Claude detects your remote, branch naming and tools, asks at most three rounds of clickable questions, shows the plan and the full config, and writes nothing until you say yes. Then it runs `justcode doctor` and every command with `-n` so you see it work.
+If the runtime is not installed yet, Claude first offers to fetch and install it (two yeses, see Install). Then it detects your remote, branch naming and tools, asks at most three rounds of clickable questions, shows the plan and the full config, and writes nothing until you say yes. Then it runs `justcode doctor` and every command with `-n` so you see it work.
 
 ### Example prompts
 
@@ -161,6 +163,7 @@ The core of each command stays on: `ship` always checks the account, pushes and 
 | 🤝 **No surprise merges** | auto-merge is only set when the PR would wait for checks; it never merges by itself. |
 | ⏳ **No hangs** | VPN waits are bounded (`NETWORK_WAIT_SECS`). |
 | 👤 **You build** | Claude prints `build` commands; you run them. |
+| 📦 **Pinned install** | Claude installs only the release tagged with the plugin's version, after a yes to download and a yes to the installer's dry run; it never overwrites a file of yours without asking for that file. |
 
 ## 🔌 Supported tools
 

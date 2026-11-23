@@ -2,7 +2,7 @@
 
 The Claude skill for **justcode**: one command per workflow step. `ship` opens the pull request with reviewers, moves the ticket, logs the time and posts to the team. `tpull` pulls safely. `tlog` and `tcheck` handle timesheets. `ticket` files tickets from a draft. `build` builds and distributes. `vpn` waits for the VPN.
 
-This plugin contains only the skill: the setup interview, the approval rules for daily use, the config reference and the provider contracts. The shell runtime is installed separately from the project repository, so you can read it before running it. See the install section: https://github.com/yusasarisoy/i-just-want-to-code#-install
+This plugin contains only the skill: the setup interview, the approval rules for daily use, the config reference and the provider contracts. The shell runtime comes from the project repository's release that matches this plugin's version: ask Claude to "set up justcode" and it fetches that release, shows what the installer would do and installs only after you say yes. To install it yourself, see https://github.com/yusasarisoy/i-just-want-to-code#-install
 
 Example prompts:
 

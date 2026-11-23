@@ -27,6 +27,19 @@ The plugin teaches Claude to drive **justcode**: shell commands (zsh, git and jq
 
 **Trust:** repo files and team commands load only when their sha256 is in `~/.config/justcode/trusted` (`justcode trust` shows content and diff, asks y/N). A changed file is untrusted again. Untrusted means the layer is skipped with one `•` line, never sourced.
 
+### 1.1 Runtime check (every request, once per session)
+
+The plugin ships only this skill; the runtime is the release of the project repository whose tag matches the plugin version. Before the first justcode step in a session:
+
+- **Values.** Plugin version: `.version` in `<this skill's base directory>/../../.claude-plugin/plugin.json`. Release tag: `v<version>`. Repository: `https://github.com/yusasarisoy/i-just-want-to-code.git`. Managed source: `${JUSTCODE_PREFIX:-$HOME/.local}/share/justcode-src`. Quote every path.
+- **Look.** `command -v justcode`, then `justcode version` (prints `justcode <version>`).
+- **Not installed.** Say what will happen: a shallow copy of the repository at the release tag goes into the managed source, then its installer shows its plan. Ask. Only after a yes: `git clone --depth 1 --branch v<version> <repository> "<managed source>"`. Then `zsh "<managed source>/runtime/install.sh" -n`, summarise its lines and ask again. Only after that second yes: `zsh "<managed source>/runtime/install.sh"`, without `-y`.
+- **Older than the plugin, managed source exists.** Offer the update the same way: on a yes, `git -C "<managed source>" fetch --depth 1 origin tag v<version>` and `git -C "<managed source>" checkout -q v<version>`, then the installer's `-n`, a second yes, the real run. A no means the update is not offered again in this session.
+- **Older, no managed source.** The runtime came from the user's own clone. Say it is older than the plugin and that it updates with `git pull` and `zsh runtime/install.sh` in that clone. Do not reinstall it.
+- **Tag not found** (clone or fetch fails on it). Say the matching release is not published yet and stop; never fall back to another branch or tag.
+- **Same or newer.** Nothing to do.
+- **After an install run.** For each `• kept <path> (justcode's <name> not linked)` line: show what that file is (`ls -l`, and the first lines when it is a script) and ask about that one file; only after its own yes, `ln -sf "<install dir>/bin/<name>" "<path>"`. For `• add <dir> to your PATH`: show the exact line `export PATH="<dir>:$PATH"` and the startup file (`~/.zshrc` for zsh, `~/.bashrc` for bash); append it only after a yes; on a no, use full paths for the rest of the session.
+
 ## 2. Setup
 
 ### 2.1 Detect silently
@@ -59,7 +72,7 @@ Example round 1:
 Before writing anything show, in one message: the files to create or change; the full resulting config, **personal and team layers separately**, with a comment per key; what each step does on their stack (e.g. "ship: push → GitHub PR → reviewers bob → Jira ABC-123 to In Review → Tempo 1h → Slack"). Then one yes/no question.
 
 ### 2.4 Write on approval
-1. If `command -v justcode` finds nothing, the runtime is not installed yet. The plugin ships only this skill; the runtime lives in the project repository. Point the user to the install section, https://github.com/yusasarisoy/i-just-want-to-code#-install, and wait until `justcode version` works. The user installs it; Claude does not.
+1. The runtime is installed by §1.1. If the user declined there, point them to the install section, https://github.com/yusasarisoy/i-just-want-to-code#-install, and wait until `justcode version` works.
 2. Write the config files. Personal keys (`*_SECRET`, `CODE_USER`, `TRACKER_USER`, `TIME_USER`, `REPO_DIR`) never go into `.justcode`.
 3. For `.justcode.local`, add it to `.gitignore`.
 
@@ -82,6 +95,8 @@ If a trusted or untrusted `.justcode` is already in the repo: ask only for perso
 2. In a clone of the project repository, write `runtime/providers/<layer>/<tool>.zsh`: only the contract functions plus `<layer>_doctor`; network through `df_http`, secrets through `df_secret`; unsupported capabilities call `df_unsupported` and return 3.
 3. If the user wants to contribute it: add routes to `tests/mock/server.py` and a persona test in `tests/personas/`.
 4. Run `zsh tests/run.zsh` and `scripts/leakcheck.sh`; then `justcode doctor` and the commands with `-n`.
+
+Files added by hand inside the installed runtime (`~/.local/share/justcode`) are replaced on the next install or update; providers belong in a clone.
 
 ## 4. Custom commands
 

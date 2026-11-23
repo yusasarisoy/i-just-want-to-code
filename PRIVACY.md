@@ -10,7 +10,9 @@ i-just-want-to-code (the plugin) and justcode (its shell runtime) collect nothin
 
 ## What leaves your machine
 
-Only the requests you configure, sent straight to the services you configured:
+When you let Claude install or update the runtime, it downloads the matching release from this project's public GitHub repository; nothing is sent besides that request.
+
+Otherwise, only the requests you configure, sent straight to the services you configured:
 
 - your code host (GitHub, GitLab, Bitbucket or your own server)
 - your tracker and time tracker (Jira, Linear, Tempo, Toggl, Clockify)
