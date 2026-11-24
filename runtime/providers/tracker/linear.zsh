@@ -64,6 +64,19 @@ tracker_create() {
   jq -r '.data.issueCreate.issue.identifier' <<<$DF_HTTP_BODY
 }
 
+# Linear has no issue types: the first label stands in for one.
+tracker_issue() {
+  _lin 'query($id:String!){ issue(id:$id){ identifier title url state{ name } labels{ nodes{ name } } } }' "$(jq -nc --arg i $1 '{id:$i}')" || return 1
+  jq -c '.data.issue | {key:.identifier, title, type:((.labels.nodes // [])[0].name // ""), status:(.state.name // ""), url}' <<<$DF_HTTP_BODY
+}
+
+tracker_list_mine() {
+  local states=$(jq -nc '$ARGS.positional' --args "$@")
+  _lin 'query($s:[String!]){ viewer{ assignedIssues(first:50, filter:{ state:{ name:{ in:$s } } }){ nodes{ identifier title url } } } }' \
+    "$(jq -nc --argjson s "$states" '{s:(if ($s|length) > 0 then $s else null end)}')" || return 1
+  jq -c '[.data.viewer.assignedIssues.nodes[]? | {key:.identifier, title, url}]' <<<$DF_HTTP_BODY
+}
+
 tracker_set_estimate() {
   tracker_get $1 || return 1
   _lin_mutate 'mutation($id:String!,$e:Int!){ issueUpdate(id:$id, input:{estimate:$e}){ success } }' \

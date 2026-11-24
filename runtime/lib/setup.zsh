@@ -213,7 +213,7 @@ _sd_detect() {
 
 # ---------------------------------------------------------------- sections
 _ss_commands() {
-  _sa_multi JUSTCODE_COMMANDS "Which commands do you want?" ship tpull tlog tcheck ticket build vpn
+  _sa_multi JUSTCODE_COMMANDS "Which commands do you want?" ship tpull tlog tcheck ticket build vpn standup release-notes nudge
   _sa_text DEFAULT_START "Default start time for durations (HH:MM)"
 }
 

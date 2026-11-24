@@ -68,4 +68,17 @@ p_run justcode config
 t_has "config shows the provider" "$OUT" "TRACKER_PROVIDER             linear"
 
 t_lacks "no secret value in any curl argv" "$(<$SHIM_STATE/curl.argv)" fake-secret
+print "nudge"
+p_mark; p_run nudge -n
+t_eq "nudge -n exits 0" $RC 0
+t_eq "nudge -n sends no writes" "$(p_writes)" ""
+t_has "gitlab: drafts skipped" "$OUT" "(1 draft skipped)"
+t_has "gitlab: the unreviewed reviewer" "$OUT" "reviewers bob"
+t_lacks "gitlab: a reviewer who reviewed is not nudged" "$OUT" "@carol"
+p_fail no-reviewers-api
+p_run nudge -n
+t_eq "gitlab without the reviewers API: exit 0" $RC 0
+t_has "gitlab without the reviewers API: a skip" "$OUT" "• pending reviewers not supported by gitlab"
+p_fail ''
+
 t_done

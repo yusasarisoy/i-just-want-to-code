@@ -6,7 +6,7 @@ emulate zsh
 setopt extended_glob pipe_fail
 zmodload zsh/datetime
 
-DF_VERSION=0.3.0
+DF_VERSION=0.4.0
 : ${DF_ROOT:=${${(%):-%x}:A:h:h}}
 DF_LIB=$DF_ROOT/lib
 typeset -gi DF_FAILED=0 DF_DRY=0
@@ -26,10 +26,11 @@ DEFAULT_START=09:00
 JUSTCODE_NOTIFY=1
 JUSTCODE_SOUNDS=1
 NETWORK_WAIT_SECS=120
-JUSTCODE_COMMANDS=(ship tpull tlog tcheck ticket build vpn)
+JUSTCODE_COMMANDS=(ship tpull tlog tcheck ticket build vpn standup release-notes nudge)
 GIT_REMOTE=origin
+COMMIT_AUTHOR=''
 
-for __df_c in SHIP TPULL TLOG TCHECK TICKET BUILD; do
+for __df_c in SHIP TPULL TLOG TCHECK TICKET BUILD STANDUP RELEASE_NOTES NUDGE; do
   typeset -ga ${__df_c}_DEFAULT_ARGS ${__df_c}_SKIP
   typeset -g ${__df_c}_PRE_HOOK='' ${__df_c}_POST_HOOK=''
 done
@@ -81,6 +82,16 @@ SHIP_TIME_TYPE=code
 TLOG_DEFAULT_COMMENT='Development'
 TLOG_DAY_FULL_HOOK=''
 DAY_LABELS=(Mon Tue Wed Thu Fri Sat Sun)
+TCHECK_FILL_REPOS=()
+TCHECK_FILL_KEY_FROM=(branch subject)
+TCHECK_FILL_LEAD_MINUTES=60
+TCHECK_FILL_GAP_MINUTES=120
+TCHECK_FILL_ROUND_MINUTES=30
+TCHECK_FILL_MIN_MINUTES=30
+TCHECK_FILL_TODAY=0
+TCHECK_FILL_TYPE=''
+TCHECK_FILL_COMMENT=''
+TCHECK_FILL_LINE='{label} {start}-{end} → {key} ({commits} commits)'
 
 DEPLOY_PROVIDER=none
 APP_NAME=''
@@ -119,15 +130,46 @@ TEAMS_WEBHOOK_SECRET=justcode-teams-webhook
 WEBHOOK_SECRET=justcode-webhook
 TEAMS_PAYLOAD=text
 
+STANDUP_DAY=yesterday
+STANDUP_REPOS=()
+STANDUP_TODAY_STATUSES=('In Progress')
+STANDUP_MESSAGE=$'Yesterday\n{yesterday}\nToday\n{today}\nBlockers\n{blockers}'
+STANDUP_TIME_LINE='- {key} {title} ({duration})'
+STANDUP_PR_LINE='- {action} {title} {url}'
+STANDUP_PR_OPENED=opened
+STANDUP_PR_UPDATED=updated
+STANDUP_COMMIT_LINE='- {subject}'
+STANDUP_TODAY_LINE='- {key} {title}'
+STANDUP_BLOCKER_LINE='- {text}'
+STANDUP_NONE=none
+STANDUP_POST_TO=clipboard
+
+RELEASE_NOTES_GROUPS=(Features 'Story,Feature' Fixes 'Bug' Other '*')
+RELEASE_NOTES_NO_TICKET_GROUP=Other
+RELEASE_NOTES_PR_LOOKUP=1
+RELEASE_NOTES_HEADER='## {to} ({date})'
+RELEASE_NOTES_GROUP_HEADER='### {group}'
+RELEASE_NOTES_TICKET_LINE='- {key} {title}'
+RELEASE_NOTES_COMMIT_LINE='- {subject} ({sha})'
+RELEASE_NOTES_POST_TO=clipboard
+
+NUDGE_AFTER_HOURS=24
+NUDGE_REPEAT_HOURS=''
+NUDGE_MESSAGE=$'{mentions} these pull requests are waiting for your review:\n{items}'
+NUDGE_LINE='- {title} {url} ({reviewers}, waiting {age})'
+NUDGE_MENTION='@{user}'
+typeset -gA NUDGE_MENTIONS=()
+NUDGE_POST_TO=clipboard
+
 # Keys personal to one engineer; never allowed in the team layer.
-DF_PERSONAL_KEYS=(CODE_USER TRACKER_USER TIME_USER REPO_DIR)
+DF_PERSONAL_KEYS=(CODE_USER TRACKER_USER TIME_USER REPO_DIR COMMIT_AUTHOR)
 df_is_personal_key() { [[ $1 == *_SECRET ]] || (( ${DF_PERSONAL_KEYS[(Ie)$1]} )) }
 
 # Every key, in documentation order (used by `justcode config` and setup).
-__df_cmds=(SHIP TPULL TLOG TCHECK TICKET BUILD)
+__df_cmds=(SHIP TPULL TLOG TCHECK TICKET BUILD STANDUP RELEASE_NOTES NUDGE)
 DF_KEYS=(
   REPO_DIR TICKET_KEY_REGEX TICKET_PREFIX DEFAULT_START JUSTCODE_NOTIFY JUSTCODE_SOUNDS
-  NETWORK_WAIT_SECS JUSTCODE_COMMANDS GIT_REMOTE
+  NETWORK_WAIT_SECS JUSTCODE_COMMANDS GIT_REMOTE COMMIT_AUTHOR
   ${^__df_cmds}_{DEFAULT_ARGS,SKIP,PRE_HOOK,POST_HOOK}
   CODE_PROVIDER CODE_API_URL CODE_REPO CODE_USER CODE_TOKEN_SECRET TARGET_BRANCHES
   PROTECTED_BRANCHES DEFAULT_REVIEWERS SHIP_LABELS SHIP_PR_DESCRIPTION MERGE_METHOD CI_NUDGE_JOB
@@ -138,12 +180,20 @@ DF_KEYS=(
   TIME_PROVIDER TIME_URL TIME_USER TIME_TOKEN_SECRET TIME_WORKSPACE DAY_TARGET_HOURS WORK_DAYS
   TIME_TYPES TIME_TYPE_ATTRIBUTE TLOG_DEFAULT_TYPE SHIP_TIME_TYPE TLOG_DEFAULT_COMMENT
   TLOG_DAY_FULL_HOOK DAY_LABELS
+  TCHECK_FILL_REPOS TCHECK_FILL_KEY_FROM TCHECK_FILL_LEAD_MINUTES TCHECK_FILL_GAP_MINUTES TCHECK_FILL_ROUND_MINUTES
+  TCHECK_FILL_MIN_MINUTES TCHECK_FILL_TODAY TCHECK_FILL_TYPE TCHECK_FILL_COMMENT TCHECK_FILL_LINE
   DEPLOY_PROVIDER APP_NAME BUILD_PROJECT_DIR BUILD_OUTPUT_DIR BUILD_KINDS BUILD_CONFIG
   XCODE_PROJECT XCODE_WORKSPACE XCODE_SCHEME_PATTERN ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_PATH
   GRADLE_TASK_PATTERN PLAY_PACKAGE PLAY_TRACK PLAY_JSON_KEY_SECRET DEPLOY_COMMAND
   VPN_PROVIDER VPN_HOSTS VPN_STATUS_CMD VPN_UP_CMD VPN_DOWN_CMD VPN_APP VPN_WATCH_SECS
   SHIP_MESSAGE SHIP_POST_TO BUILD_MESSAGE BUILD_POST_TO TICKET_MESSAGE TICKET_POST_TO
   SLACK_WEBHOOK_SECRET TEAMS_WEBHOOK_SECRET WEBHOOK_SECRET TEAMS_PAYLOAD
+  STANDUP_DAY STANDUP_REPOS STANDUP_TODAY_STATUSES STANDUP_MESSAGE STANDUP_TIME_LINE STANDUP_PR_LINE
+  STANDUP_PR_OPENED STANDUP_PR_UPDATED STANDUP_COMMIT_LINE STANDUP_TODAY_LINE STANDUP_BLOCKER_LINE
+  STANDUP_NONE STANDUP_POST_TO
+  RELEASE_NOTES_GROUPS RELEASE_NOTES_NO_TICKET_GROUP RELEASE_NOTES_PR_LOOKUP RELEASE_NOTES_HEADER
+  RELEASE_NOTES_GROUP_HEADER RELEASE_NOTES_TICKET_LINE RELEASE_NOTES_COMMIT_LINE RELEASE_NOTES_POST_TO
+  NUDGE_AFTER_HOURS NUDGE_REPEAT_HOURS NUDGE_MESSAGE NUDGE_LINE NUDGE_MENTION NUDGE_MENTIONS NUDGE_POST_TO
 )
 
 # ---------------------------------------------------------------- output
@@ -248,7 +298,7 @@ typeset -ga DF_DEFAULT_ARGS
 DF_DEFAULT_ARGS=(${(P)${:-${DF_CMD_KEY}_DEFAULT_ARGS}})
 
 # ---------------------------------------------------------------- custom commands
-DF_BUILTINS=(ship tpull tlog tcheck ticket build vpn justcode justcode-post)
+DF_BUILTINS=(ship tpull tlog tcheck ticket build vpn standup release-notes nudge justcode justcode-post)
 DF_PERSONAL_COMMANDS=$DF_CONFIG_DIR/commands
 DF_TEAM_COMMANDS=${DF_REPO:+$DF_REPO/.justcode-commands}
 
@@ -381,6 +431,17 @@ df_week_bounds() {
 
 # Two half-open minute ranges overlap.
 df_overlaps() { (( $1 < $4 && $3 < $2 )) }
+
+# df_time_clash <entries-json> <start-min> <end-min> [skip-id]: prints "<key> at <HH:MM>"
+# for the first entry the range overlaps (0) or nothing (1). The one overlap rule for tlog and tcheck --fill.
+df_time_clash() {
+  local c
+  c=$(jq -r --argjson s $2 --argjson e $3 --arg x "${4:-}" '[.[] | select((.id|tostring) != $x)
+    | ((.start|split(":")|(.[0]|tonumber)*60+(.[1]|tonumber))) as $a
+    | select($a < $e and $s < ($a + (.secs/60|floor))) | "\(.key) at \(.start)"][0] // empty' <<<$1) || return 1
+  [[ -n $c ]] || return 1
+  print -r -- $c
+}
 
 # Time types: short name <-> provider value, as JSON for jq.
 df_time_types_json() {

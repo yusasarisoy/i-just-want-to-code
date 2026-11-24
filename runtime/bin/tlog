@@ -60,12 +60,7 @@ if [[ -n $old ]]; then
   esac
   entry=$(jq -c '.[0]' <<<$matches)
   id=$(jq -r .id <<<$entry)
-  clash=''
-  for line in ${(f)"$(jq -r --arg id $id 'map(select(.id != $id))[] | "\(.start) \(.secs) \(.key)"' <<<$entries)"}; do
-    o1=$(df_to_min ${line%% *}) rest=${line#* }
-    df_overlaps $s $e $o1 $(( o1 + ${rest%% *} / 60 )) && { clash="${rest#* } at ${line%% *}"; break }
-  done
-  [[ -z $clash ]] || df_die "moving to $2 would overlap $clash on $day; nothing changed"
+  clash=$(df_time_clash "$entries" $s $e $id) && df_die "moving to $2 would overlap $clash on $day; nothing changed"
   [[ -n $comment ]] || comment=$(jq -r .comment <<<$entry)
   [[ -n $comment ]] || comment=$TLOG_DEFAULT_COMMENT
   if (( ! type_given )); then old_type=$(jq -r '.type // empty' <<<$entry); type=${old_type:-$type}; fi
@@ -80,6 +75,7 @@ else
   if [[ $(jq --arg k $key --arg s $start --argjson n $secs 'any(.[]; .key==$k and .start==$s and .secs==$n)' <<<$entries) == true ]]; then
     df_skip "$(df_fmt_duration $secs) on $key at $start on $day already logged"; df_finish
   fi
+  clash=$(df_time_clash "$entries" $s $e) && df_die "$2 would overlap $clash on $day; nothing logged"
   if (( DF_DRY )); then df_dry "log $(df_fmt_duration $secs) on $key, $day $start ($type): $comment"; df_finish; fi
   time_create $key $day $start $secs $type "$comment" >/dev/null || df_die "not logged ($(df_last_error))"
   df_ok "logged $(df_fmt_duration $secs) on $key, $day $start ($type)"

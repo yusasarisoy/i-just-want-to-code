@@ -90,6 +90,42 @@ code_auto_merge() {
 
 code_ci_nudge() { df_unsupported "CI nudge" github }
 
+# ISO 8601 (with or without fractions or +00:00) -> epoch seconds, in jq.
+_gh_ep='def ep: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;'
+
+# code_list_my_prs <from-epoch> <to-epoch>: CODE_USER's PRs updated in [from, to).
+code_list_my_prs() {
+  local repo q; repo=$(code_repo_path) || return 1
+  q="is:pr repo:$repo author:$CODE_USER updated:>=$(df_iso_utc $1)"
+  _gh GET "/search/issues?q=$(df_urlencode $q)&per_page=100" || return 1
+  jq -c --argjson f $1 --argjson t $2 "$_gh_ep"' [.items[] | {id:.number, url:.html_url, title, draft:(.draft // false),
+    created:(.created_at|ep), updated:(.updated_at|ep)} | select(.updated >= $f and .updated < $t)]' <<<$DF_HTTP_BODY
+}
+
+# code_pending_reviews: CODE_USER's open PRs with the reviewers who have not reviewed
+# yet; "since" is when each one was last asked (or the PR left draft, if later).
+code_pending_reviews() {
+  local repo prs n out='[]' tl; repo=$(code_repo_path) || return 1
+  _gh GET "/repos/$repo/pulls?state=open&per_page=100" || return 1
+  prs=$(jq -c --arg u "$CODE_USER" "$_gh_ep"' [.[] | select(.user.login == $u) | {id:.number, url:.html_url, title,
+    draft:(.draft // false), created:(.created_at|ep), reviewers:[.requested_reviewers[]? | {user:.login, name:.login}]}]' <<<$DF_HTTP_BODY) || return 1
+  for n in ${(f)"$(jq -r '.[] | select(.draft | not) | select(.reviewers | length > 0) | .id' <<<$prs)"}; do
+    _gh GET "/repos/$repo/issues/$n/timeline?per_page=100" || return 1
+    tl=$DF_HTTP_BODY
+    prs=$(jq -c --argjson n $n --argjson tl "$tl" "$_gh_ep"' map(if .id != $n then . else
+      ([$tl[] | select(.event == "ready_for_review") | .created_at | ep] | max) as $ready
+      | .reviewers |= map(.user as $u | . + {since: ([([$tl[] | select(.event == "review_requested" and .requested_reviewer.login == $u) | .created_at | ep] | max), $ready] | map(select(. != null)) | max)})
+      | .created as $c | .reviewers |= map(.since //= $c) end)' <<<$prs) || return 1
+  done
+  jq -c 'map(.reviewers |= map(.since //= 0))' <<<$prs
+}
+
+# code_prs_for_commit <sha>: the PRs that contain <sha>.
+code_prs_for_commit() {
+  _gh GET "/repos/$(code_repo_path)/commits/$1/pulls" || return 1
+  jq -c '[.[] | {id:.number, url:.html_url, title, branch:.head.ref}]' <<<$DF_HTTP_BODY
+}
+
 code_doctor() {
   local who repo
   who=$(code_whoami) || { df_fail "github: cannot read the token owner ($DF_HTTP_ERR)"; return 1 }

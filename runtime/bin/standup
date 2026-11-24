@@ -1,0 +1,151 @@
+#!/usr/bin/env zsh
+# standup: a Yesterday / Today / Blockers message from a day's time logs, your
+# commits and pull requests, and the tickets you have in progress.
+DF_ROOT=${0:A:h:h}; DF_CMD=standup
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+source $DF_LIB/reports.zsh
+
+usage() {
+  print -r -- "usage: standup [-n] [-d day] [-b blocker]...
+  -d  the day to report: today, yesterday, YYYY-MM-DD, DD.MM.YYYY
+      (default STANDUP_DAY: $STANDUP_DAY)
+  -b  a blocker; repeat for more (none given: $STANDUP_NONE)
+  -n  dry run: read everything, send nothing
+  steps (STANDUP_SKIP): time commits prs today"
+}
+
+set -- "${STANDUP_DEFAULT_ARGS[@]}" "$@"
+day='' blockers=()
+while getopts ':d:b:nh' o; do
+  case $o in
+    d) day=$OPTARG ;; b) blockers+=("$OPTARG") ;; n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    :) df_die "-$OPTARG needs a value (standup -h)" ;;
+    *) df_die "unknown option -$OPTARG (standup -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# == 0 )) || df_die "unexpected argument '$1' (standup -h)"
+
+if [[ -n $day ]]; then
+  day=$(df_parse_day "$day") || df_die "bad day '$day' (today, yesterday, YYYY-MM-DD, DD.MM.YYYY)"
+else
+  case $STANDUP_DAY in
+    last-workday)
+      day=$(df_add_days $(df_today) -1)
+      repeat 6; do df_in_list $(df_dow $day) $WORK_DAYS && break; day=$(df_add_days $day -1); done ;;
+    *) day=$(df_parse_day "$STANDUP_DAY") || df_die "bad STANDUP_DAY '$STANDUP_DAY' (yesterday, last-workday, today, YYYY-MM-DD)" ;;
+  esac
+fi
+from=$(df_epoch $day) to=$(df_epoch $(df_add_days $day 1))
+label=$DAY_LABELS[$(df_dow $day)]
+repos=(${(f)"$(df_rpt_repos $STANDUP_REPOS)"})
+
+typeset -i tracker_on=0
+[[ $TRACKER_PROVIDER != none ]] && tracker_on=1
+if (( tracker_on )); then df_use tracker; df_wait_for_host "$TRACKER_URL" || df_finish; fi
+df_hook PRE
+df_ok "day $day ($label)"
+
+# ---- time logs of the day, one line per ticket
+time_lines=''
+if df_step_off time; then df_skip "time: skipped"
+elif [[ $TIME_PROVIDER == none ]]; then df_skip "time: no time tracker configured"
+else
+  df_use time
+  df_wait_for_host "$TIME_URL" || df_finish
+  if ! entries=$(time_list $day); then df_fail "time: cannot read $day's worklogs ($(df_last_error))"
+  else
+    rows=$(jq -c 'group_by(.key) | map({key:.[0].key, secs:(map(.secs)|add), entries:length,
+      comment:([.[].comment | select(. != "")] | unique | join(", "))})' <<<$entries)
+    items='[]'
+    for row in ${(f)"$(jq -c '.[]' <<<$rows)"}; do
+      k=$(jq -r .key <<<$row) issue='{}'
+      if (( tracker_on )) && [[ -n $k ]]; then issue=$(tracker_issue $k 2>/dev/null) || issue='{}'; fi
+      items=$(jq -c --argjson r "$row" --argjson i "$issue" --arg d "$(df_fmt_duration $(jq -r .secs <<<$row))" \
+        '. + [$r + {title:(($i.title // "") | if . != "" then . else $r.comment end), url:($i.url // ""),
+          type:($i.type // ""), duration:$d}]' <<<$items)
+    done
+    time_lines=$(df_rpt_lines "$STANDUP_TIME_LINE" "$items")
+    n=$(jq length <<<$entries)
+    df_ok "time: $n $( (( n == 1 )) && print -n entry || print -n entries), $(df_fmt_duration $(df_sum_secs <<<$entries))"
+  fi
+fi
+
+# ---- your commits of the day, in every STANDUP_REPOS repository
+commit_lines=''
+if df_step_off commits; then df_skip "commits: skipped"
+else
+  items='[]' n=0
+  for r in $repos; do
+    [[ -n $(df_rpt_author $r) ]] || { df_skip "commits: no author for ${r:t} (set COMMIT_AUTHOR or git user.email)"; continue }
+    for line in ${(f)"$(df_rpt_commits $r $from $to | sort -n)"}; do
+      items=$(jq -c --arg s "${line#*$'\t'*$'\t'}" --arg h "${${line#*$'\t'}[1,7]}" --arg r "${r:t}" \
+        'if any(.[]; .subject == $s) then . else . + [{subject:$s, sha:$h, repo:$r}] end' <<<$items)
+    done
+  done
+  commit_lines=$(df_rpt_lines "$STANDUP_COMMIT_LINE" "$items")
+  df_ok "commits: $(jq length <<<$items) in ${#repos} repo$( (( ${#repos} == 1 )) || print -n s)"
+fi
+
+# ---- pull requests you opened or updated that day
+pr_lines=''
+if df_step_off prs; then df_skip "pull requests: skipped"
+elif [[ -z $CODE_USER ]]; then df_skip "pull requests: CODE_USER is not set"
+else
+  df_use code
+  df_wait_for_host "${CODE_API_URL:-https://$(df_remote_host)}" || df_finish
+  items='[]' rc=0
+  for r in $repos; do
+    out=$( cd $r && { [[ ${r:A} == ${DF_REPO:A} ]] || CODE_REPO=''; } && code_list_my_prs $from $to 2>/dev/null ); rc=$?
+    (( rc == 3 )) && break
+    (( rc )) && { df_fail "pull requests: cannot read ${r:t} ($(df_last_error))"; continue }
+    items=$(jq -c --argjson more "${out:-[]}" --arg r "${r:t}" --arg o "$STANDUP_PR_OPENED" --arg u "$STANDUP_PR_UPDATED" --argjson f $from \
+      '. + ($more | map(. + {repo:$r, action:(if .created >= $f then $o else $u end)}))' <<<$items)
+  done
+  if (( rc == 3 )); then df_skip "pull requests: not supported by $CODE_PROVIDER"
+  elif (( rc == 0 )) || [[ $items != '[]' ]]; then
+    pr_lines=$(df_rpt_lines "$STANDUP_PR_LINE" "$items")
+    df_ok "pull requests: $(jq length <<<$items) opened or updated"
+  fi
+fi
+
+# ---- today: tickets in STANDUP_TODAY_STATUSES
+today_lines=''
+if df_step_off today; then df_skip "today: skipped"
+elif (( ! tracker_on )); then df_skip "today: no tracker configured"
+else
+  out=$(tracker_list_mine $STANDUP_TODAY_STATUSES); rc=$?
+  if (( rc == 3 )); then df_skip "today: assigned tickets not supported by $TRACKER_PROVIDER"
+  elif (( rc )); then df_fail "today: cannot read your tickets ($(df_last_error))"
+  else
+    today_lines=$(df_rpt_lines "$STANDUP_TODAY_LINE" "$out")
+    df_ok "today: $(jq length <<<$out) ticket(s) in ${(j:, :)STANDUP_TODAY_STATUSES:-any status}"
+  fi
+fi
+
+# ---- blockers
+if (( ${#blockers} )); then
+  blocker_lines=$(df_rpt_lines "$STANDUP_BLOCKER_LINE" "$(jq -nc '$ARGS.positional | map({text:.})' --args $blockers)")
+  df_ok "blockers: ${#blockers}"
+else
+  blocker_lines=''
+  df_skip "blockers: $STANDUP_NONE"
+fi
+
+# ---- message
+yesterday=$(print -rl -- ${time_lines:+"$time_lines"} ${pr_lines:+"$pr_lines"} ${commit_lines:+"$commit_lines"})
+msg=$(df_fill "$STANDUP_MESSAGE" day $day label "$label" \
+  yesterday "$(df_rpt_section "$STANDUP_NONE" "$yesterday")" \
+  today "$(df_rpt_section "$STANDUP_NONE" "$today_lines")" \
+  blockers "$(df_rpt_section "$STANDUP_NONE" "$blocker_lines")")
+if [[ -z ${msg//[[:space:]]/} ]]; then df_skip "message: STANDUP_MESSAGE is empty; nothing to send"
+else
+  print -r -- "$msg"
+  if (( DF_FAILED )); then df_skip "message not sent: a step failed"
+  else df_post "$STANDUP_POST_TO" "$msg"
+  fi
+fi
+
+df_hook POST
+df_finish

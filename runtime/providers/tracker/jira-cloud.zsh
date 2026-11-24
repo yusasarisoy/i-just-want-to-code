@@ -127,6 +127,23 @@ tracker_create() {
   jq -r .key <<<$DF_HTTP_BODY
 }
 
+# tracker_issue <key>: {key, title, type, status, url}.
+tracker_issue() {
+  _jira GET "/rest/api/$_JIRA_API/issue/$1?fields=summary,issuetype,status" || return 1
+  jq -c --arg u "${TRACKER_URL%/}/browse/" '{key, title:(.fields.summary // ""), type:(.fields.issuetype.name // ""),
+    status:(.fields.status.name // ""), url:($u + .key)}' <<<$DF_HTTP_BODY
+}
+
+# tracker_list_mine <status...>: [{key, title, url}] assigned to the token owner.
+tracker_list_mine() {
+  local jql endpoint s list=''
+  for s; do list+="${list:+, }\"${s//\"/}\""; done
+  jql="assignee = currentUser()${list:+ AND status in ($list)} ORDER BY updated DESC"
+  [[ $_JIRA_KIND == cloud ]] && endpoint=/rest/api/3/search/jql || endpoint=/rest/api/2/search
+  _jira GET "$endpoint?jql=$(df_urlencode $jql)&fields=summary&maxResults=50" || return 1
+  jq -c --arg u "${TRACKER_URL%/}/browse/" '[.issues[]? | {key, title:(.fields.summary // ""), url:($u + .key)}]' <<<$DF_HTTP_BODY
+}
+
 tracker_set_estimate() {
   [[ -n $TICKET_BOARD ]] || { df_err "estimates need TICKET_BOARD"; return 1 }
   _jira_json PUT "/rest/agile/1.0/issue/$1/estimation?boardId=$TICKET_BOARD" "$(jq -nc --arg v $2 '{value:$v}')"

@@ -35,7 +35,9 @@ key_value() {
     association*) local -A h=("${(@kvP)k}"); local out='(' x
       for x in ${(ok)h}; do out+=" ${(q-)x} ${(q-)h[$x]}"; done; print -r -- "$out )" ;;
     array*) local -a arr=("${(@P)k}"); print -r -- "(${(j: :)${(@q-)arr}})" ;;
-    *) print -r -- "${(q-)${(P)k}}" ;;
+    *) if [[ ${(P)k} == *$'\n'* ]]; then print -r -- "${(qqqq)${(P)k}}"  # one line: $'a\nb'
+       else print -r -- "${(q-)${(P)k}}"
+       fi ;;
   esac
 }
 cmd_config() {
@@ -159,7 +161,7 @@ cmd_doctor() {
   df_in_list build $want && doctor_provider deploy deploy_doctor
   df_in_list network $want && doctor_provider vpn vpn_doctor
   if df_in_list messages $want; then
-    for t in ${(u)${(s:,:)${:-$SHIP_POST_TO,$BUILD_POST_TO,$TICKET_POST_TO}// /}}; do
+    for t in ${(u)${(s:,:)${:-$SHIP_POST_TO,$BUILD_POST_TO,$TICKET_POST_TO,$STANDUP_POST_TO,$RELEASE_NOTES_POST_TO,$NUDGE_POST_TO}// /}}; do
       case $t in
         slack) doctor_secret "$SLACK_WEBHOOK_SECRET" ;; teams) doctor_secret "$TEAMS_WEBHOOK_SECRET" ;;
         webhook) doctor_secret "$WEBHOOK_SECRET" ;; clipboard|none) ;;

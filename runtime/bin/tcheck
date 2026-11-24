@@ -1,24 +1,37 @@
 #!/usr/bin/env zsh
-# tcheck: compare logged time per day with DAY_TARGET_HOURS.
+# tcheck: compare logged time per day with DAY_TARGET_HOURS; with --fill, propose
+# entries for the short days from your commits and log them with tlog.
 DF_ROOT=${0:A:h:h}; DF_CMD=tcheck
 source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+source $DF_LIB/reports.zsh
 
 usage() {
-  print -r -- "usage: tcheck [-w weeks-back]
+  print -r -- "usage: tcheck [-n] [-w weeks-back] [--fill [-y]]
   checks from Monday <weeks-back> weeks ago (default 0 = this week) through today
-  ✓ target met   ✗ short (missing time shown)   • today, or a non-workday with time"
+  ✓ target met   ✗ short (missing time shown)   • today, or a non-workday with time
+  --fill  (or -f) propose entries for the short days from your commits, matched to the
+          ticket key in the branch name; never overlapping, never past DAY_TARGET_HOURS
+  -y      log the proposals with tlog without asking
+  -n      dry run: list the proposals, log nothing"
 }
 
 set -- "${TCHECK_DEFAULT_ARGS[@]}" "$@"
-weeks=0
-while getopts ':w:h' o; do
+args=()
+for a; do [[ $a == --fill ]] && args+=(-f) || args+=("$a"); done  # getopts has no long options
+set -- "${args[@]}"
+weeks=0 fill=0 yes=0
+while getopts ':w:fynh' o; do
   case $o in
     w) [[ $OPTARG == [0-9]## ]] || df_die "-w takes a number"; weeks=$OPTARG ;;
+    f) fill=1 ;; y) yes=1 ;; n) DF_DRY=1 ;;
     h) usage; exit 0 ;;
-    *) df_die "unknown option (tcheck -h)" ;;
+    :) df_die "-$OPTARG needs a value (tcheck -h)" ;;
+    *) df_die "unknown option -$OPTARG (tcheck -h)" ;;
   esac
 done
-[[ $TIME_PROVIDER != none ]] || df_die "no time tracker configured (TIME_PROVIDER=none)"
+shift $(( OPTIND - 1 ))
+(( $# == 0 )) || df_die "unexpected argument '$1' (tcheck -h)"
+[[ $TIME_PROVIDER != none ]] || { df_skip "tcheck: no time tracker configured (TIME_PROVIDER=none)"; exit 0 }
 
 df_use time
 df_wait_for_host "$TIME_URL" || df_finish
@@ -31,19 +44,70 @@ typeset -A per
 for line in ${(f)totals}; do per[${line% *}]=${line#* }; done
 
 typeset -i target=$(( DAY_TARGET_HOURS * 3600 ))
-typeset -i sum=0 short=0
+typeset -i sum=0
+short=()
 d=$from
 while [[ $d < $today || $d == $today ]]; do
   dow=$(df_dow $d) secs=${per[$d]:-0}
   label="$DAY_LABELS[$dow] $d $(df_fmt_duration $secs)"
   (( sum += secs ))
-  if [[ $d == $today ]]; then df_skip "$label (today)"
+  if [[ $d == $today ]]; then
+    df_skip "$label (today)"
+    (( TCHECK_FILL_TODAY && secs < target )) && df_in_list $dow $WORK_DAYS && short+=($d)
   elif ! df_in_list $dow $WORK_DAYS; then (( secs )) && df_skip "$label (not a workday)"
   elif (( secs >= target )); then df_ok "$label"
-  else df_fail "$label, $(df_fmt_duration $(( target - secs ))) short"; short=1
+  else df_fail "$label, $(df_fmt_duration $(( target - secs ))) short"; short+=($d)
   fi
   d=$(df_add_days $d 1)
 done
 df_info "total: $(df_fmt_duration $sum)"
+(( fill )) || { df_hook POST; df_finish }
+
+# ---- --fill: proposals from commits
+DF_FAILED=0  # short days are what --fill is for; from here on only fill errors count
+repos=(${(f)"$(df_rpt_repos $TCHECK_FILL_REPOS)"})
+(( ${#repos} )) || df_die "fill: not inside a git repository and TCHECK_FILL_REPOS is empty"
+for r in $repos; do git -C $r rev-parse --git-dir >/dev/null 2>&1 || df_die "fill: $r is not a git repository"; done
+(( ${#short} )) || { df_skip "fill: no short days"; df_hook POST; df_finish }
+
+plan=()  # "day start-min end-min KEY commits"
+typeset -i planned=0
+for d in $short; do
+  dlabel=$DAY_LABELS[$(df_dow $d)]
+  commits=''
+  for r in $repos; do commits+=$(df_rpt_keyed_commits $r $(df_epoch $d) $(df_epoch $(df_add_days $d 1)))$'\n'; done
+  if [[ -z ${commits//[[:space:]]/} ]]; then df_skip "fill: $dlabel $d has no commits with a ticket key"; continue; fi
+  entries=$(time_list $d) || { df_fail "fill: cannot read $d's worklogs ($(df_last_error))"; continue }
+  blocks=(${(f)"$(df_fill_blocks $d "$entries" "$commits")"})
+  if (( ! ${#blocks} )); then df_skip "fill: $dlabel $d has no free time next to its commits"; continue; fi
+  for b in $blocks; do plan+=("$d $b"); (( planned += ${${b#* }%% *} - ${b%% *} )); done
+done
+(( ${#plan} )) || { df_skip "fill: nothing to propose"; df_hook POST; df_finish }
+
+df_ok "fill: ${#plan} proposal$( (( ${#plan} == 1 )) || print -n s), $(df_fmt_duration $(( planned * 60 )))"
+for p in $plan; do
+  f=(${=p})
+  line=$(df_fill "$TCHECK_FILL_LINE" label "$DAY_LABELS[$(df_dow $f[1])]" day $f[1] start $(df_min_to_hhmm $f[2]) \
+    end $(df_min_to_hhmm $f[3]) key $f[4] commits $f[5] duration $(df_fmt_duration $(( (f[3] - f[2]) * 60 ))))
+  [[ -n $line ]] && df_info "$line"
+done
+
+type=${TCHECK_FILL_TYPE:-$TLOG_DEFAULT_TYPE} comment=${TCHECK_FILL_COMMENT:-$TLOG_DEFAULT_COMMENT}
+if (( DF_DRY )); then
+  for p in $plan; do f=(${=p}); df_dry "tlog -t $type $f[4] $(df_min_to_hhmm $f[2])-$(df_min_to_hhmm $f[3]) $f[1] $comment"; done
+  df_finish
+fi
+if (( ! yes )); then
+  ans=''
+  [[ -t 0 ]] && read -r "ans?Log these ${#plan} entries with tlog? [y/N] "
+  if [[ $ans != [yY]* ]]; then
+    df_skip "fill: not confirmed; nothing logged$([[ -t 0 ]] || print -n ' (run again with -y to log them)')"
+    df_finish
+  fi
+fi
+for p in $plan; do
+  f=(${=p})
+  $DF_ROOT/bin/tlog -t $type $f[4] $(df_min_to_hhmm $f[2])-$(df_min_to_hhmm $f[3]) $f[1] "$comment" || DF_FAILED=1
+done
 df_hook POST
 df_finish

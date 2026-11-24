@@ -38,6 +38,47 @@ t_eq "real ship makes exactly the expected writes" "$(p_writes)" "POST /github/r
 t_eq "branch pushed to origin" "$(git -C $T/origin.git rev-parse feature/ABC-123-login)" "$(git rev-parse HEAD)"
 t_eq "message on the clipboard" "$(<$SHIM_STATE/clipboard)" "https://git.example.com/alice/myapp/pull/7"
 
+print "standup"
+print -r -- "STANDUP_PRE_HOOK='touch $T/standup-pre'" >>$HOME/.config/justcode/config
+p_mark; p_run standup -n
+t_eq "standup -n exits 0 without tracker or time" $RC 0
+t_eq "standup -n sends no writes" "$(p_writes)" ""
+t_has "no time tracker is a skip" "$OUT" "• time: no time tracker configured"
+t_has "no tracker is a skip for today" "$OUT" "• today: no tracker configured"
+t_has "pull requests still read" "$OUT" "✓ pull requests: 2 opened or updated"
+t_has "empty today shows the none text" "$OUT" $'Today\nnone'
+t_has "standup -n plans the pre hook only" "$OUT" "[dry-run] pre hook: touch"
+t_no "the hook did not run in a dry run" test -e $T/standup-pre
+p_run env JUSTCODE_SET='STANDUP_DAY=last-workday' standup -n
+t_lacks "last-workday is never a Saturday" "$OUT" "(Sat)"
+t_lacks "last-workday is never a Sunday" "$OUT" "(Sun)"
+p_run env JUSTCODE_SET='STANDUP_MESSAGE=' standup -n
+t_has "an emptied message sends nothing" "$OUT" "• message: STANDUP_MESSAGE is empty"
+p_mark; p_run standup -b "Waiting for review"
+t_eq "real standup exits 0" $RC 0
+t_eq "real standup writes nothing remote" "$(p_writes)" ""
+t_ok "the pre hook ran" test -e $T/standup-pre
+t_has "standup message on the clipboard" "$(<$SHIM_STATE/clipboard)" $'Blockers\n- Waiting for review'
+
+print "tcheck --fill"
+p_mark; p_run tcheck --fill -n
+t_eq "tcheck --fill without a time tracker exits 0" $RC 0
+t_has "tcheck --fill without a time tracker is a skip" "$OUT" "• tcheck: no time tracker configured"
+t_eq "tcheck --fill without a time tracker writes nothing" "$(p_writes)" ""
+
+print "release-notes"
+git tag v0.1.0
+git commit -q --allow-empty -m "ABC-200 add the settings screen"
+git commit -q --allow-empty -m "Bump the version"
+p_mark; p_run release-notes -n v0.1.0
+t_eq "release-notes -n exits 0 without a tracker" $RC 0
+t_eq "release-notes -n sends no writes" "$(p_writes)" ""
+t_has "no tracker is a skip" "$OUT" "• tickets: no tracker configured; 1 key(s) listed with their commit subject"
+t_has "the key keeps its commit subject" "$OUT" "- ABC-200 ABC-200 add the settings screen"
+t_has "ticketless commits are listed" "$OUT" "- Bump the version ("
+p_run release-notes v0.1.0
+t_has "notes on the clipboard" "$(<$SHIM_STATE/clipboard)" "### Other"
+
 print "other commands"
 p_run tlog -n ABC-123 9-10
 t_eq "tlog without a time tracker stops" $RC 1
@@ -52,6 +93,7 @@ p_run justcode config
 t_has "config shows the source file" "$OUT" "CODE_USER                    alice   # $HOME/.config/justcode/config"
 t_has "config shows secret entry names only" "$OUT" "justcode-code-token   # default, secret entry name"
 t_lacks "config never shows a secret value" "$OUT" fake-secret
+t_has "a multi-line template stays on one line" "$OUT" "STANDUP_MESSAGE              \$'Yesterday\\n{yesterday}\\nToday\\n{today}\\nBlockers\\n{blockers}'   # default"
 
 print "custom commands"
 mkdir -p $HOME/.config/justcode/commands
@@ -128,6 +170,16 @@ p_run zsh -c "print y | justcode trust $PWD/.justcode-commands/mark"
 t_has "trust shows the diff since last time" "$OUT" "+# changed"
 p_run justcode doctor commands
 t_has "doctor checks custom commands" "$OUT" "deploy-preview: follows the command contract"
+
+print "nudge"
+p_mark; p_run nudge -n
+t_eq "nudge -n exits 0" $RC 0
+t_eq "nudge -n sends no writes" "$(p_writes)" ""
+t_has "nudge -n shows the message" "$OUT" "@bob these pull requests are waiting for your review:"
+p_run env JUSTCODE_SET='NUDGE_MESSAGE=' nudge -n
+t_has "an emptied message sends nothing" "$OUT" "• message: NUDGE_MESSAGE is empty"
+p_run nudge -y
+t_has "nudge message on the clipboard" "$(<$SHIM_STATE/clipboard)" "- Pull request 7"
 
 print "secrets"
 t_lacks "no secret value in any curl argv" "$(<$SHIM_STATE/curl.argv)" fake-secret

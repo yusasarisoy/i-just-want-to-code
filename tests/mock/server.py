@@ -17,9 +17,12 @@ MOCK_FAIL_FILE (re-read on every request) or an X-Mock-Fail header:
   draft         existing pull requests are drafts
   state-unknown GitHub pull requests report mergeable_state "unknown" (just created)
   preparing-briefly GitLab merge requests are "preparing" with no pipeline for 1 s after the first read
+  commit-prs    every commit belongs to pull request 12 (feature/ABC-125-docs)
+  no-reviewers-api  GitLab has no merge request reviewers endpoint (older GitLab)
   logged-10     Tempo also lists a 1h ABC-123 worklog at 10:00 (what a first "ship -l 1h" wrote)
 """
 import argparse
+import calendar
 import json
 import os
 import re
@@ -34,6 +37,15 @@ LOCK = threading.Lock()
 SEEN = {}  # first-seen times, for switches whose answer changes over time
 USER = os.environ.get("MOCK_USER", "alice")
 HOST = "https://git.example.com"
+ISSUES = {"ABC-123": ("Login", "Story"), "ABC-124": ("Crash on start", "Bug"), "ABC-125": ("Update the docs", "Task")}
+
+
+def iso(epoch):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def epoch(text):
+    return calendar.timegm(time.strptime(text[:19], "%Y-%m-%dT%H:%M:%S"))
 
 
 def switches(handler):
@@ -56,6 +68,38 @@ def pull(number=7, draft=False, merge_now=False, reviewers=None):
     }
 
 
+def open_pulls(sw):
+    """alice's #7 (bob asked 30 h ago, carol 2 h ago), alice's draft #8, bob's #9."""
+    now = time.time()
+    def one(n, user, draft, reviewers, created):
+        return {"number": n, "html_url": f"{HOST}/alice/myapp/pull/{n}", "title": f"Pull request {n}", "draft": draft,
+                "user": {"login": user}, "created_at": iso(created),
+                "requested_reviewers": [{"login": r} for r in reviewers]}
+    return [one(7, USER, "draft" in sw, ["bob", "carol"], now - 40 * 3600),
+            one(8, USER, True, ["dave"], now - 50 * 3600),
+            one(9, "bob", False, [USER], now - 50 * 3600)]
+
+
+def timeline(n):
+    now = time.time()
+    if n != 7:
+        return []
+    return [{"event": "review_requested", "requested_reviewer": {"login": "bob"}, "created_at": iso(now - 30 * 3600)},
+            {"event": "review_requested", "requested_reviewer": {"login": "carol"}, "created_at": iso(now - 2 * 3600)}]
+
+
+def commit_pulls(sha, host):
+    """Every commit belongs to pull request 12 from feature/ABC-125-docs."""
+    if host == "gitlab":
+        return [{"iid": 12, "web_url": f"{HOST}/alice/myapp/-/merge_requests/12", "title": "Update the docs",
+                 "source_branch": "feature/ABC-125-docs"}]
+    if host == "bitbucket":
+        return {"values": [{"id": 12, "title": "Update the docs", "source": {"branch": {"name": "feature/ABC-125-docs"}},
+                            "links": {"html": {"href": "https://bitbucket.org/alice/myapp/pull-requests/12"}}}]}
+    return [{"number": 12, "html_url": f"{HOST}/alice/myapp/pull/12", "title": "Update the docs",
+             "head": {"ref": "feature/ABC-125-docs"}}]
+
+
 def mr(iid=7, draft=False, merge_now=False):
     return {
         "iid": iid, "web_url": f"{HOST}/alice/myapp/-/merge_requests/{iid}",
@@ -66,7 +110,14 @@ def mr(iid=7, draft=False, merge_now=False):
 
 
 def bb_pr(pid=7, draft=False):
+    """bob (asked, not approved) and carol (approved) review it; opened 30 h ago."""
     return {"id": pid, "title": "Add login screen", "draft": draft, "description": "", "reviewers": [],
+            "created_on": iso(time.time() - 30 * 3600).replace("Z", ".123456+00:00"),
+            "updated_on": iso(time.time() - 3600).replace("Z", ".123456+00:00"),
+            "participants": [
+                {"role": "REVIEWER", "approved": False, "state": None, "user": {"nickname": "bob", "display_name": "Bob"}},
+                {"role": "REVIEWER", "approved": True, "state": "approved", "user": {"nickname": "carol", "display_name": "Carol"}},
+                {"role": "PARTICIPANT", "approved": False, "state": None, "user": {"nickname": "dave", "display_name": "Dave"}}],
             "links": {"html": {"href": f"https://bitbucket.org/alice/myapp/pull-requests/{pid}"}}}
 
 
@@ -139,6 +190,14 @@ class Handler(BaseHTTPRequestHandler):
     def r_github(self, m, p, q, b, sw):
         if p == "/user":
             return {"login": USER}
+        if p == "/search/issues":
+            since = re.search(r"updated:>=(\S+)", q.get("q", ""))
+            t0 = epoch(since.group(1)) if since else 0
+            return {"items": [
+                {"number": 7, "html_url": f"{HOST}/alice/myapp/pull/7", "title": "Add login screen", "draft": False,
+                 "created_at": iso(t0 + 3600), "updated_at": iso(t0 + 7200)},
+                {"number": 5, "html_url": f"{HOST}/alice/myapp/pull/5", "title": "Fix the crash on start", "draft": False,
+                 "created_at": iso(t0 - 3 * 24 * 3600), "updated_at": iso(t0 + 3 * 3600)}]}
         if p == "/graphql":
             if "enablePullRequestAutoMerge" in b.get("query", "") and "merge-now" in sw:
                 return {"data": None, "errors": [{"message": "Pull request is in clean status"}]}
@@ -150,9 +209,17 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "":
             return {"full_name": "alice/myapp"}
         if rest == "/pulls" and m == "GET":
+            if q.get("head") is None:  # every open pull request (nudge)
+                return open_pulls(sw)
             return [pull(draft="draft" in sw)] if "exists" in sw or "pr-exists" in sw else []
         if rest == "/pulls" and m == "POST":
             return 201, pull(draft=bool(b.get("draft")))
+        tm = re.match(r"^/issues/(\d+)/timeline$", rest)
+        if tm:
+            return timeline(int(tm.group(1)))
+        cm = re.match(r"^/commits/([0-9a-f]+)/pulls$", rest)
+        if cm:
+            return commit_pulls(cm.group(1), "github") if "commit-prs" in sw else []
         if re.match(r"^/pulls/\d+$", rest):
             pr = pull(merge_now="merge-now" in sw, draft="draft" in sw)
             if "state-unknown" in sw:
@@ -177,7 +244,20 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "":
             return {"path_with_namespace": "alice/myapp"}
         if rest == "/merge_requests" and m == "GET":
+            if "author_username" in q:  # nudge (opened) and standup (updated in a window)
+                now = time.time()
+                rows = [mr(7), {**mr(8, draft=True), "title": "Draft: Settings"}]
+                for r in rows:
+                    r.update({"created_at": iso(now - 40 * 3600) .replace("Z", ".000Z"), "updated_at": iso(now - 3600)})
+                return rows
             return [mr(draft="draft" in sw)] if "exists" in sw or "pr-exists" in sw else []
+        rm = re.match(r"^/merge_requests/(\d+)/reviewers$", rest)
+        if rm:
+            if "no-reviewers-api" in sw:
+                return 404, {"message": "404 Not Found"}
+            now = time.time()
+            return [{"user": {"username": "bob", "name": "Bob"}, "state": "unreviewed", "created_at": iso(now - 30 * 3600)},
+                    {"user": {"username": "carol", "name": "Carol"}, "state": "reviewed", "created_at": iso(now - 30 * 3600)}]
         if rest == "/merge_requests" and m == "POST":
             return 201, mr(draft=b.get("title", "").startswith("Draft:"))
         if re.match(r"^/merge_requests/\d+(/merge)?$", rest):
@@ -188,6 +268,9 @@ class Handler(BaseHTTPRequestHandler):
                 if time.monotonic() - since < 1:
                     out.update({"detailed_merge_status": "preparing", "head_pipeline": None})
             return out
+        cm = re.match(r"^/repository/commits/([0-9a-f]+)/merge_requests$", rest)
+        if cm:
+            return commit_pulls(cm.group(1), "gitlab") if "commit-prs" in sw else []
         if rest == "/pipelines":
             return [{"id": 11, "sha": q.get("sha"), "status": "skipped"}]
         if rest.startswith("/pipelines/11/jobs"):
@@ -207,11 +290,16 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "":
             return {"full_name": "alice/myapp"}
         if rest == "/pullrequests" and m == "GET":
+            if "author.nickname" in q.get("q", ""):  # nudge and standup
+                return {"values": [bb_pr(7)]}
             return {"values": [bb_pr(draft="draft" in sw)] if "exists" in sw or "pr-exists" in sw else []}
         if rest == "/pullrequests" and m == "POST":
             return 201, bb_pr(draft=bool(b.get("draft")))
         if re.match(r"^/pullrequests/\d+$", rest):
             return bb_pr(draft="draft" in sw)
+        cm = re.match(r"^/commit/([0-9a-f]+)/pullrequests$", rest)
+        if cm:
+            return commit_pulls(cm.group(1), "bitbucket") if "commit-prs" in sw else {"values": []}
         return None
 
     # ------------------------------------------------------------ trackers
@@ -226,6 +314,9 @@ class Handler(BaseHTTPRequestHandler):
             if rest.startswith("/project/"):
                 return {"key": rest.split("/")[2]}
             if rest in ("/search/jql", "/search"):
+                if "currentUser()" in unquote(q.get("jql", "")):
+                    return {"issues": [{"key": "ABC-123", "fields": {"summary": "Login"}},
+                                       {"key": "ABC-124", "fields": {"summary": "Crash on start"}}]}
                 if "search-fails" in sw:
                     return 500, {"errorMessages": ["search is down"]}
                 if "exists" in sw:
@@ -253,7 +344,9 @@ class Handler(BaseHTTPRequestHandler):
                                             {"id": "41", "name": "Done", "to": {"name": "Done"}}]}
                 if key.isdigit():
                     key = "ABC-123"
-                return {"id": "101", "key": key, "fields": {"status": {"name": "In Progress"}, "summary": "Login"}}
+                summary, kind = ISSUES.get(key, ("Login", "Task"))
+                return {"id": "101", "key": key, "fields": {"status": {"name": "In Progress"}, "summary": summary,
+                                                             "issuetype": {"name": kind}}}
             return None
         if p.startswith("/rest/agile/1.0/board/"):
             return {"values": [{"id": 9, "name": "Sprint 9", "state": "active"}]}

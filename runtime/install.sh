@@ -8,7 +8,7 @@ src=${0:A:h}
 prefix=${JUSTCODE_PREFIX:-$HOME/.local}
 share=$prefix/share/justcode bindir=$prefix/bin
 personal=${JUSTCODE_CONFIG_DIR:-$HOME/.config/justcode}/commands
-reserved=(ship tpull tlog tcheck ticket build vpn justcode justcode-post)  # not "builtins": zsh reserves that name
+reserved=(ship tpull tlog tcheck ticket build vpn standup release-notes nudge justcode justcode-post)  # not "builtins": zsh reserves that name
 yes=0 dry=0
 for a; do
   case $a in -y) yes=1 ;; -n) dry=1 ;; *) print -r -- "usage: install.sh [-y] [-n]"; exit 1 ;; esac
@@ -41,7 +41,7 @@ link() {  # link <source> <name>
     fi
     run rm -f $target
   fi
-  run ln -s $1 $target && print -r -- "✓ $2"
+  run ln -s $1 $target && { (( dry )) || print -r -- "✓ $2" }
 }
 for f in $src/bin/*(N); do link $share/bin/${f:t} ${f:t}; done
 for f in $personal/*(N.); do

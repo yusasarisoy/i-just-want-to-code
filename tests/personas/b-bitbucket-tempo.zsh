@@ -99,4 +99,12 @@ p_run justcode config
 t_has "config shows the map" "$OUT" "TIME_TYPES                   ( code Development meeting Meeting )"
 
 t_lacks "no secret value in any curl argv" "$(<$SHIM_STATE/curl.argv)" fake-secret
+print "nudge"
+p_mark; p_run nudge -n
+t_eq "nudge -n exits 0" $RC 0
+t_eq "nudge -n sends no writes" "$(p_writes)" ""
+t_has "bitbucket: the reviewer who has not approved" "$OUT" "reviewers bob"
+t_lacks "bitbucket: an approved reviewer is not nudged" "$OUT" "@carol"
+t_lacks "bitbucket: a participant is not a reviewer" "$OUT" "@dave"
+
 t_done

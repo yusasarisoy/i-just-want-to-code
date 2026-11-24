@@ -6,7 +6,7 @@
 
 The busywork around your code (pull requests, ticket status, timesheets, builds, team posts) done by **justcode**, on your stack, with your tools. Claude sets it up for you; every value, step, hook and message is configurable.
 
-`ship` · `tpull` · `tlog` · `tcheck` · `ticket` · `build` · `vpn`
+`ship` · `tpull` · `tlog` · `tcheck` · `ticket` · `standup` · `release-notes` · `nudge` · `build` · `vpn`
 
 ---
 
@@ -58,8 +58,11 @@ One line per step: **✓** done · **•** skipped · **✗** failed. Exit 1 if 
 | 🚀 | `ship` | push, PR/MR, reviewers, draft or auto-merge, CI nudge, ticket status, time log, team message |
 | ⬇️ | `tpull` | fetch and fast-forward; on divergence recommends rebase or merge and lets you choose |
 | ⏱️ | `tlog` | log or move a time entry: `tlog ABC-123 9-10`, `tlog 42 09:30-12:00 yesterday` |
-| 📅 | `tcheck` | every day this week (or back `-w N` weeks) against your daily target |
+| 📅 | `tcheck` | every day this week (or back `-w N` weeks) against your daily target; `--fill` proposes entries for short days from your commits |
 | 🎫 | `ticket` | create tickets from a draft file, fields by their screen names |
+| 🗣️ | `standup` | Yesterday / Today / Blockers from your time logs, commits, PRs and in-progress tickets |
+| 📝 | `release-notes` | markdown notes between two refs, tickets grouped by type: `release-notes v0.2.0 v0.3.0` |
+| 🔔 | `nudge` | one message to the reviewers your PRs have been waiting on; shown first, sent on your yes |
 | 📦 | `build` | build a clean worktree, upload, post "build uploaded" |
 | 🔐 | `vpn` | `status` · `up` · `down` · `re` · `watch` |
 | ⚙️ | `justcode` | `setup` · `config` · `doctor` · `trust` · `edit` · `command` · `run` · … |
@@ -109,8 +112,98 @@ If the runtime is not installed yet, Claude first offers to fetch and install it
 | "ship this branch as a draft, reviewer bob, dry run first" | Runs `ship -n` and shows every planned step; runs `ship` only after you approve |
 | "log 9-10 today on ABC-123" | Runs `tlog -n ABC-123 9-10`, checks for overlaps, then logs it on your yes |
 | "how many hours am I missing this week?" | Runs `tcheck` and lists the days under your daily target |
+| "fill my missing hours this week from my commits" | Runs `tcheck --fill -n`, shows each proposed range per ticket, logs them with `tlog` on your yes |
+| "write my standup, blocker: waiting for the API keys" | Runs `standup -n -b "..."`, shows the message, sends it on your yes |
+| "release notes from v0.2.0 to now" | Runs `release-notes -n v0.2.0`, shows the markdown, writes or sends it on your yes |
+| "remind reviewers about my waiting PRs" | Runs `nudge -n`, shows the one message and who it names, sends it on your yes |
 | "create the tickets in draft.md as Tasks" | Runs `ticket -n -t Task draft.md`, shows each ticket, creates them on your yes |
 | "add a command that opens a deploy preview" | Creates a custom command skeleton with `-n` and `-h`, checks it, and runs it as a dry run |
+
+### Step by step, without Claude
+
+The same onboarding in a terminal, one step at a time. Nothing is written until the step says so.
+
+**1. See the install plan.** `-n` writes nothing; it lists what will be copied and linked, and where.
+
+```bash
+zsh runtime/install.sh -n
+```
+
+**2. Install.** The runtime goes to `~/.local/share/justcode`, the commands are linked into `~/.local/bin`. A file of yours with the same name is never overwritten without asking. If it prints `• add ~/.local/bin to your PATH`, add that line to `~/.zshrc` (or `~/.bashrc`).
+
+```bash
+zsh runtime/install.sh
+```
+
+**3. Check the install.** Prints the installed version.
+
+```bash
+justcode version
+```
+
+**4. Run the setup wizard** inside your repository. It detects the code host from the remote, the ticket key from the branch name (`feature/ABC-123-login` → `ABC`) and your build tools, then asks per section: commands, code host, tracker, time tracker, build, network, messages. Enter keeps the value in brackets, `?` explains a question. Before writing it shows the config as a diff, then runs `justcode doctor`. `justcode setup <section>` re-runs one section later; `-n` shows the diff only.
+
+```bash
+justcode setup
+```
+
+**5. Store your secrets.** justcode never asks for a token. For each missing one, `justcode doctor` prints the command for your OS; run it, and the OS keychain asks for the value:
+
+```bash
+security add-generic-password -a "$USER" -s justcode-code-token -w    # macOS
+secret-tool store --label=justcode-code-token service justcode-code-token   # Linux
+```
+
+With GitHub you can skip this and reuse the GitHub CLI login: `CODE_TOKEN_SECRET=gh`.
+
+**6. Add your own settings.** Every behaviour is a key in [`references/config.md`](plugin/skills/i-just-want-to-code/references/config.md). For example a time tracker, where standup and nudge messages go, and how long a review may wait:
+
+```bash
+justcode edit global
+```
+
+```zsh
+TIME_PROVIDER=tempo-cloud
+TIME_USER=<your account id>
+STANDUP_POST_TO=slack
+NUDGE_POST_TO=slack
+NUDGE_AFTER_HOURS=24
+```
+
+**7. Health check.** Checks the tools, every host, that each token belongs to you, and that every secret is stored. Secret values are never shown. Fix every `✗` before going on.
+
+```bash
+justcode doctor
+```
+
+**8. Read your templates.** `justcode config` shows every effective value and the file it came from, message templates included. Change any template in your config; leave it unset for the default, set it empty to leave that part out (`STANDUP_COMMIT_LINE=''` drops commit lines).
+
+```bash
+justcode config | grep -E '^(STANDUP|NUDGE|RELEASE_NOTES)_'
+```
+
+**9. First dry runs.** Each one does every read and no write; what it would write shows as a `[dry-run]` line.
+
+```bash
+ship -n -l 9-10                              # push, PR, reviewers, ticket move, time log, message
+standup -n -b "Waiting for the API keys"     # Yesterday / Today / Blockers from time logs, commits, PRs, tickets
+tcheck --fill -n                             # short days of this week, filled from your commits
+release-notes -n v0.3.0                      # notes from v0.3.0 to HEAD, grouped by ticket type
+nudge -n                                     # one message to reviewers who have waited 24h or more
+```
+
+For example, `tcheck --fill -n` lists its proposals and the `tlog` calls it would make. They never overlap an existing entry and never go past your daily target:
+
+```console
+✗ Tue 2026-11-17 0m, 8h short
+✓ fill: 2 proposals, 3h
+  Tue 10:00-12:00 → ABC-123 (4 commits)
+  Tue 14:30-15:30 → ABC-123 (1 commits)
+[dry-run] tlog -t code ABC-123 10:00-12:00 2026-11-17 Development
+[dry-run] tlog -t code ABC-123 14:30-15:30 2026-11-17 Development
+```
+
+**10. Run for real** once the dry run looks right: drop `-n`. `tcheck --fill` and `nudge` show what they will do and ask first; `-y` answers yes for you.
 
 ## 🛠️ Configure
 
@@ -142,6 +235,12 @@ Turn off what you don't use, add what you need:
 | no team message | `SHIP_POST_TO=none` (also `BUILD_POST_TO`, `TICKET_POST_TO`) |
 | auto-merge or draft by default | `SHIP_DEFAULT_ARGS=(-a)` or `(-D)`; `-A` turns it off for one run |
 | your own step before or after | `SHIP_PRE_HOOK='make lint'`, `SHIP_POST_HOOK='...'` (same for every command) |
+| standup that fits your team | `STANDUP_MESSAGE`, `STANDUP_*_LINE`, `STANDUP_DAY=last-workday`, `STANDUP_TODAY_STATUSES=('In Progress' Review)`, `STANDUP_REPOS=(~/src/app ~/src/api)` |
+| fill short days your way | `TCHECK_FILL_LEAD_MINUTES`, `TCHECK_FILL_GAP_MINUTES`, `TCHECK_FILL_ROUND_MINUTES`, `TCHECK_FILL_MIN_MINUTES`, `TCHECK_FILL_REPOS`, `TCHECK_FILL_TYPE` |
+| your release notes layout | `RELEASE_NOTES_GROUPS=(New 'Story,Feature' Fixed 'Bug' Other '*')`, `RELEASE_NOTES_HEADER`, `RELEASE_NOTES_TICKET_LINE='- [{key}]({url}) {title}'` |
+| gentler or stricter nudges | `NUDGE_AFTER_HOURS=48`, `NUDGE_MENTIONS=(bob '<@U123>')`, `NUDGE_REPEAT_HOURS=24` (opt-in quiet period) |
+| drop a part of a message | set its template empty, e.g. `STANDUP_COMMIT_LINE=''`; unset means the default |
+| where messages go | `STANDUP_POST_TO`, `RELEASE_NOTES_POST_TO`, `NUDGE_POST_TO`: clipboard (default), slack, teams, webhook, none |
 | a whole new flow | a custom command (below) |
 
 The core of each command stays on: `ship` always checks the account, pushes and opens or updates the PR, because without them there is nothing to ship.
@@ -180,7 +279,7 @@ Not listed? Ask Claude to add a provider, or write one yourself (below).
 
 ## 🧩 Custom commands
 
-Need `deploy-preview` or `release-notes`? Make it a justcode command:
+Need `deploy-preview` or a weekly report? Make it a justcode command:
 
 ```console
 $ justcode command new deploy-preview     # skeleton with -n, -h, hooks, dry-run guards

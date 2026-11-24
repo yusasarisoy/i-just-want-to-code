@@ -12,6 +12,9 @@ Provider files: `runtime/providers/code/<name>.zsh`. Contract (every function; r
 | `code_add_reviewers <id> <users...>` | keeps existing reviewers |
 | `code_auto_merge <id>` | 0 = set; 2 = would merge immediately or state unknown, and then it does **not** merge |
 | `code_ci_nudge <branch> <sha>` | optional (GitLab) |
+| `code_list_my_prs <from-epoch> <to-epoch>` | `CODE_USER`'s PRs updated in that window: `[{id, url, title, draft, created, updated}]` (epoch seconds); standup |
+| `code_pending_reviews` | `CODE_USER`'s open PRs with the reviewers who have not reviewed yet: `[{id, url, title, draft, created, reviewers:[{user, name, since}]}]`; return 3 when the host cannot tell; nudge |
+| `code_prs_for_commit <sha>` | `[{id, url, title, branch}]`, the PRs that contain the commit; release-notes |
 | `code_doctor` | read-only self-check |
 
 Remotes understood: `https://host[:port]/owner/name(.git)`, `git@host:owner/name`, `ssh://git@host:2222/owner/name`. `CODE_REPO` overrides the path, `CODE_API_URL` the API base.
@@ -20,12 +23,14 @@ Remotes understood: `https://host[:port]/owner/name(.git)`, `git@host:owner/name
 - REST v3 for everything, GraphQL for draft toggles and auto-merge (`enablePullRequestAutoMerge`).
 - API URL: `https://api.github.com`; GitHub Enterprise: `https://<host>/api/v3`.
 - Token: fine-grained token with Pull requests read/write and Contents read, or a classic token with `repo`. `CODE_TOKEN_SECRET=gh` reuses the GitHub CLI login.
+- Pending reviewers are `requested_reviewers` (GitHub drops a reviewer from it once they review); `since` is their latest `review_requested` timeline event, or `ready_for_review` if later. PRs of the day come from the search API (`is:pr repo:<repo> author:<user> updated:>=`).
 - Auto-merge needs "Allow auto-merge" in the repository settings; when the PR is already mergeable GitHub would merge at once, so justcode returns 2 and leaves it. A new PR whose state is still `unknown` gets auto-merge; GitHub refuses it if the PR turns out to be mergeable already.
 
 ## GitLab (`gitlab`)
 - REST v4, gitlab.com or self-hosted (`https://<host>/api/v4`, derived from the remote).
 - Token: personal or project access token with scope `api`, sent as `PRIVATE-TOKEN`.
 - Auto-merge is "merge when pipeline succeeds"; a new MR that is still being checked or has no pipeline yet is read again for up to ~8 s; still without a running pipeline, justcode returns 2.
+- Pending reviewers come from `/merge_requests/:iid/reviewers` (state `unreviewed`, GitLab 15.9+); an older GitLab answers 404 and nudge skips with `•`.
 - `CI_NUDGE_JOB`: name of a manual job that ship plays and cancels at once, so a pipeline that would wait on it settles as passed with warnings. Off by default.
 
 ## Bitbucket Cloud (`bitbucket`)
@@ -33,6 +38,7 @@ Remotes understood: `https://host[:port]/owner/name(.git)`, `git@host:owner/name
 - Secret value is `username:app-password` or `email:api-token` (basic auth).
 - Reviewers are account IDs (`{...}`), not usernames.
 - Labels and auto-merge are not supported (•).
+- Pending reviewers are participants with role `REVIEWER` who have not approved or requested changes. Bitbucket keeps no request time, so `since` is when the PR was opened.
 
 ## Not built in (write a provider from the contract)
 - **Bitbucket Data Center:** REST 1.0 under `/rest/api/1.0/projects/<key>/repos/<slug>/pull-requests`, Bearer HTTP access token; reviewers are user slugs.

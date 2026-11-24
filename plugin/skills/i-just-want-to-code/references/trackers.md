@@ -10,6 +10,8 @@ Provider files: `runtime/providers/tracker/<name>.zsh`. Contract (return 3 = not
 | `tracker_find_by_title <title>` | prints the key or nothing; exit 1 = search failed, and callers must stop (fail closed) |
 | `tracker_create <type> <title> <description-file>` | resolves fields by screen name; a bad value lists the allowed ones and stops |
 | `tracker_set_estimate <key> <points>` | |
+| `tracker_issue <key>` | prints `{key, title, type, status, url}`; standup titles and release-notes groups |
+| `tracker_list_mine <status...>` | prints `[{key, title, url}]` assigned to the token owner in those statuses; standup's Today |
 | `tracker_doctor` | read-only self-check |
 
 `ticket` resolves every `-f 'Field=Value'`, `TICKET_FIELDS` and `TICKET_FIELDS_<TYPE>` item by its screen name from the create metadata. With `TICKET_PREFER_CUSTOM_FIELDS=1` a custom field wins over a system field of the same name.
@@ -19,6 +21,7 @@ Provider files: `runtime/providers/tracker/<name>.zsh`. Contract (return 3 = not
 - Token: API token from id.atlassian.com (Security, API tokens); basic auth `email:token`.
 - REST v3, descriptions in Atlassian Document Format, search through `/rest/api/3/search/jql`, assignees by accountId.
 - Sprints and estimates need `TICKET_BOARD` (agile API).
+- Your tickets: JQL `assignee = currentUser() AND status in (...)`.
 
 ## Jira Data Center / Server (`jira-dc`)
 - `TRACKER_URL=https://jira.example.com`; no `TRACKER_USER`.
@@ -31,9 +34,10 @@ Provider files: `runtime/providers/tracker/<name>.zsh`. Contract (return 3 = not
 - Token: personal API key (Settings, Security and access), sent as the `Authorization` header.
 - `TICKET_PROJECT` is the team key (`ENG`); branches like `eng-42-fix` match the default key regex.
 - States are set directly (no transitions); issue types map to labels of the same name; custom fields are not supported.
+- `tracker_issue` reports the first label as the type, so release-notes groups Linear issues by label; your tickets come from `viewer.assignedIssues`.
 
 ## None (`none`)
-Every function returns 3. ship, tlog and build never touch a tracker secret.
+Every function returns 3. ship, tlog, build, standup and release-notes never touch a tracker secret.
 
 ## Not built in
 - **GitHub Issues / Projects:** REST `/repos/<o>/<r>/issues`, keys are `#123`; set `TICKET_KEY_REGEX='[0-9]+'`. Projects v2 status needs GraphQL `updateProjectV2ItemFieldValue`.

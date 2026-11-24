@@ -105,6 +105,38 @@ code_ci_nudge() {
   _gl POST "/projects/$(_gl_pid)/jobs/$jid/cancel"
 }
 
+_gl_ep='def ep: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;'
+
+code_list_my_prs() {
+  _gl GET "/projects/$(_gl_pid)/merge_requests?author_username=$(df_urlencode $CODE_USER)&state=all&updated_after=$(df_urlencode $(df_iso_utc $1))&updated_before=$(df_urlencode $(df_iso_utc $2))&per_page=100" || return 1
+  jq -c --argjson f $1 --argjson t $2 "$_gl_ep"' [.[] | {id:.iid, url:.web_url, title, draft:(.draft // .work_in_progress // false),
+    created:(.created_at|ep), updated:(.updated_at|ep)} | select(.updated >= $f and .updated < $t)]' <<<$DF_HTTP_BODY
+}
+
+# Reviewers in state "unreviewed" (GitLab 15.9+); older GitLab has no such endpoint: 3.
+code_pending_reviews() {
+  local prs n
+  _gl GET "/projects/$(_gl_pid)/merge_requests?state=opened&author_username=$(df_urlencode $CODE_USER)&per_page=100" || return 1
+  prs=$(jq -c "$_gl_ep"' [.[] | {id:.iid, url:.web_url, title, draft:(.draft // .work_in_progress // false),
+    created:(.created_at|ep), reviewers:[]}]' <<<$DF_HTTP_BODY) || return 1
+  for n in ${(f)"$(jq -r '.[] | select(.draft | not) | .id' <<<$prs)"}; do
+    if ! _gl GET "/projects/$(_gl_pid)/merge_requests/$n/reviewers"; then
+      [[ $DF_HTTP_CODE == 404 ]] && { df_unsupported "pending reviewers" "this GitLab version"; return 3 }
+      return 1
+    fi
+    prs=$(jq -c --argjson n $n --argjson r "$DF_HTTP_BODY" "$_gl_ep"' map(if .id != $n then . else
+      .reviewers = [$r[] | select(.state == "unreviewed") | {user:.user.username, name:(.user.name // .user.username),
+        since:((.created_at // null) | if . == null then null else ep end)}]
+      | .created as $c | .reviewers |= map(.since //= $c) end)' <<<$prs) || return 1
+  done
+  print -r -- $prs
+}
+
+code_prs_for_commit() {
+  _gl GET "/projects/$(_gl_pid)/repository/commits/$1/merge_requests" || return 1
+  jq -c '[.[] | {id:.iid, url:.web_url, title, branch:.source_branch}]' <<<$DF_HTTP_BODY
+}
+
 code_doctor() {
   local who
   who=$(code_whoami) || { df_fail "gitlab: cannot read the token owner ($DF_HTTP_ERR)"; return 1 }

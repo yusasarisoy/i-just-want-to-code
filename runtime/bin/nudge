@@ -1,0 +1,100 @@
+#!/usr/bin/env zsh
+# nudge: one message to the reviewers your open pull requests have been waiting
+# on for NUDGE_AFTER_HOURS or more. Shown first; sent only after you confirm.
+DF_ROOT=${0:A:h:h}; DF_CMD=nudge
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+source $DF_LIB/reports.zsh
+
+usage() {
+  print -r -- "usage: nudge [-n] [-y]
+  finds your open pull requests whose reviewers have not reviewed for
+  NUDGE_AFTER_HOURS ($NUDGE_AFTER_HOURS) hours or more; drafts are skipped
+  -y  send the message without asking
+  -n  dry run: show the message, send nothing"
+}
+
+set -- "${NUDGE_DEFAULT_ARGS[@]}" "$@"
+yes=0
+while getopts ':ynh' o; do
+  case $o in
+    y) yes=1 ;; n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    *) df_die "unknown option -$OPTARG (nudge -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# == 0 )) || df_die "unexpected argument '$1' (nudge -h)"
+[[ $NUDGE_AFTER_HOURS == [0-9]##(.[0-9]##|) ]] || df_die "NUDGE_AFTER_HOURS must be a number of hours"
+[[ -z $NUDGE_REPEAT_HOURS || $NUDGE_REPEAT_HOURS == [0-9]##(.[0-9]##|) ]] || df_die "NUDGE_REPEAT_HOURS must be empty or a number of hours"
+git rev-parse --git-dir >/dev/null 2>&1 || df_die "not inside a git repository"
+[[ -n $CODE_USER ]] || df_die "CODE_USER is not set; nudge only speaks for a known account (justcode setup code)"
+
+df_use code
+df_wait_for_host "${CODE_API_URL:-https://$(df_remote_host)}" || df_finish
+who=$(code_whoami) || df_die "cannot read the token owner ($(df_last_error)); nothing sent"
+[[ $who == $CODE_USER ]] || df_die "the token belongs to '$who' but CODE_USER is '$CODE_USER'; nothing sent"
+df_ok "signed in as $who"
+df_hook PRE
+
+prs=$(code_pending_reviews 2>/dev/null); rc=$?
+if (( rc == 3 )); then df_skip "pending reviewers not supported by $CODE_PROVIDER"; df_hook POST; df_finish; fi
+(( rc )) && df_die "cannot read your pull requests ($(df_last_error))"
+drafts=$(jq '[.[] | select(.draft)] | length' <<<$prs)
+df_ok "open pull requests: $(jq length <<<$prs) ($drafts draft$( (( drafts == 1 )) || print -n s) skipped)"
+
+now=$(df_now)
+waiting=$(df_nudge_wait "$prs" $now $NUDGE_AFTER_HOURS)
+
+# Optional quiet period: NUDGE_REPEAT_HOURS set means a reviewer nudged about a
+# pull request within that many hours is left out this time.
+stamps=$(git rev-parse --path-format=absolute --git-path justcode/nudge 2>/dev/null)
+if [[ -n $NUDGE_REPEAT_HOURS && -r $stamps ]]; then
+  for line in ${(f)"$(<$stamps)"}; do
+    f=(${=line})
+    (( now - f[3] < NUDGE_REPEAT_HOURS * 3600 )) || continue
+    if [[ $(jq --argjson i "$f[1]" --arg u "$f[2]" 'any(.[]; .id == $i and any(.reviewers[]; .user == $u))' <<<$waiting) == true ]]; then
+      df_skip "$f[2] on #$f[1] was nudged $(df_fmt_age $(( now - f[3] ))) ago (NUDGE_REPEAT_HOURS)"
+      waiting=$(jq -c --argjson i "$f[1]" --arg u "$f[2]" 'map(if .id == $i then .reviewers |= map(select(.user != $u)) else . end) | map(select(.reviewers | length > 0))' <<<$waiting)
+    fi
+  done
+fi
+
+if [[ $(jq length <<<$waiting) == 0 ]]; then
+  df_skip "nothing has waited ${NUDGE_AFTER_HOURS}h or more"
+  df_hook POST; df_finish
+fi
+users=(${(u)${(f)"$(jq -r '.[].reviewers[].user' <<<$waiting)"}})
+df_ok "waiting ${NUDGE_AFTER_HOURS}h or more: $(jq length <<<$waiting) pull request(s), reviewers ${(j:, :)users}"
+
+# ---- the message
+typeset -A mention
+for u in $users; do mention[$u]=$(df_nudge_mention $u "$(jq -r --arg u $u '[.[].reviewers[] | select(.user == $u)][0].name' <<<$waiting)"); done
+rows='[]'
+for pr in ${(f)"$(jq -c '.[]' <<<$waiting)"}; do
+  who_list=() oldest=0
+  for u in ${(f)"$(jq -r '.reviewers[].user' <<<$pr)"}; do who_list+=("$mention[$u]"); done
+  oldest=$(jq '[.reviewers[].waited] | max' <<<$pr)
+  rows=$(jq -c --argjson p "$pr" --arg r "${(j:, :)who_list}" --arg a "$(df_fmt_age $oldest)" \
+    '. + [$p | {id, title, url, reviewers:$r, age:$a}]' <<<$rows)
+done
+items=$(df_rpt_lines "$NUDGE_LINE" "$rows")
+mentions=() ; for u in $users; do mentions+=("$mention[$u]"); done
+msg=$(df_fill "$NUDGE_MESSAGE" mentions "${(j: :)mentions}" items "$items" count "$(jq length <<<$waiting)")
+if [[ -z ${msg//[[:space:]]/} ]]; then df_skip "message: NUDGE_MESSAGE is empty; nothing to send"; df_hook POST; df_finish; fi
+print -r -- "$msg"
+
+if (( DF_DRY )); then df_post "$NUDGE_POST_TO" "$msg"; df_finish; fi
+if (( ! yes )); then
+  ans=''
+  [[ -t 0 ]] && read -r "ans?Send this message to $NUDGE_POST_TO? [y/N] "
+  if [[ $ans != [yY]* ]]; then
+    df_skip "not confirmed; nothing sent$([[ -t 0 ]] || print -n ' (run again with -y to send it)')"
+    df_finish
+  fi
+fi
+if df_post "$NUDGE_POST_TO" "$msg" && [[ -n $NUDGE_REPEAT_HOURS && -n $stamps ]]; then
+  mkdir -p ${stamps:h}
+  jq -r --argjson now $now '.[] | .id as $i | .reviewers[] | "\($i) \(.user) \($now)"' <<<$waiting >>$stamps
+fi
+df_hook POST
+df_finish

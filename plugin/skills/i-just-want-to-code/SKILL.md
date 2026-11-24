@@ -1,6 +1,6 @@
 ---
 name: i-just-want-to-code
-description: Use when the user wants to set up, run, change or extend justcode (the i-just-want-to-code plugin), the one-command engineering workflow (ship a branch as a pull request with reviewers, ticket status, time log and team message; safe pull; time logging and weekly check; tickets from drafts; build and distribute; VPN wait), or asks for a workflow command justcode does not have yet. Covers the setup interview, daily-use approval rules, config layers and trust, custom commands and adding providers for new tools.
+description: Use to set up, run, change or extend justcode (the i-just-want-to-code plugin), one command per engineering chore - ship (PR, reviewers, ticket, time, message), tpull, tlog, tcheck (and --fill), ticket, standup, release-notes, nudge, build, vpn - or when a workflow command is missing. Covers setup, approval rules, config layers, trust, custom commands and providers.
 ---
 
 # i-just-want-to-code
@@ -14,14 +14,17 @@ The plugin teaches Claude to drive **justcode**: shell commands (zsh, git and jq
 | `ship` | push, find or open the PR/MR, title, description, reviewers, draft or auto-merge, CI nudge, ticket status, time log, team message |
 | `tpull` | fetch and fast-forward; on divergence recommends rebase or merge and asks |
 | `tlog` | log or move a time entry (`9-10`, `09:30-12:00`), overlap-checked |
-| `tcheck` | weekly time check against `DAY_TARGET_HOURS` |
+| `tcheck` | weekly time check against `DAY_TARGET_HOURS`; `--fill` proposes entries for short days from your commits and logs them with tlog |
 | `ticket` | create tickets from a draft file (fields by screen name, estimates, sprint, epic) |
 | `build` | build a clean worktree, upload (TestFlight, Play, any command), post the message |
+| `standup` | Yesterday / Today / Blockers from a day's time logs, commits and PRs, and your in-progress tickets |
+| `release-notes` | markdown notes for `<from> [to]`: ticket keys from commits and PRs, grouped by ticket type |
+| `nudge` | one message to the reviewers your open PRs have waited on for `NUDGE_AFTER_HOURS` |
 | `vpn` | status, up, down, re, watch |
 | `justcode` | setup, config, doctor, trust, untrust, edit, files, command, run, agent, selfcheck, version |
 | `justcode-post` | send stdin to clipboard, Slack, Teams or a webhook |
 
-**Everything is configurable.** No value, step, hook or message is hard-coded; every behaviour is a key in `references/config.md` with a neutral default. Org-specific behaviour is an optional key, off by default.
+**Everything is configurable.** No value, step, hook or message is hard-coded; every behaviour is a key in `references/config.md` with a neutral default. Org-specific behaviour is an optional key, off by default. Templates belong to the user: unset keeps the default, empty leaves that part out (`references/messages.md`).
 
 **Layers** (later wins): `~/.config/justcode/config` (personal) → `<repo>/.justcode` (team, committed) → `<repo>/.justcode.local` (personal per repo, git-ignored) → `JUSTCODE_SET='K=v;K2=v'` (one run, single values only) → flags.
 
@@ -63,7 +66,7 @@ Find out without asking: OS and shell; `git remote get-url origin` → code host
 - Never ask for a secret value. Ask only the secret-store entry name and suggest a default (`justcode-code-token`).
 
 Example round 1:
-- "Which justcode commands do you want?" (multi) ship, tpull, tlog + tcheck, ticket, build, vpn
+- "Which justcode commands do you want?" (multi) ship, tpull, tlog + tcheck, ticket, standup, release-notes, nudge, build, vpn
 - "Code host?" GitHub (Recommended, from the remote), GitLab, Bitbucket, None
 - "How should ship finish?" Ask me every time (Recommended), Auto-merge by default, Draft by default
 - "Default reviewers?" None, Type names
@@ -84,7 +87,7 @@ For each missing secret, show the user the store command that `justcode doctor` 
 `CODE_TOKEN_SECRET=gh` reuses the GitHub CLI login. Never read, echo or store the value yourself.
 
 ### 2.6 Verify
-Run `justcode doctor`, then every chosen command with `-n` (`ship -n`, `tpull -n`, `tlog -n ABC-1 9-10`, `ticket -n -t Task draft.md`, `build -n test`). Show a table: command, result (✓/•/✗), what to fix. Fix config problems before finishing.
+Run `justcode doctor`, then every chosen command with `-n` (`ship -n`, `tpull -n`, `tlog -n ABC-1 9-10`, `tcheck --fill -n`, `ticket -n -t Task draft.md`, `standup -n`, `release-notes -n <last-tag>`, `nudge -n`, `build -n test`). Show a table: command, result (✓/•/✗), what to fix. Fix config problems before finishing.
 
 ### 2.7 Team config exists
 If a trusted or untrusted `.justcode` is already in the repo: ask only for personal keys. Tell the user to review the file and run `justcode trust` themselves; never trust a file on their behalf.
@@ -120,6 +123,10 @@ Contract: `-n` and `-h`; ✓/•/✗ lines; exit 1 if any step failed; safe to r
 - **tpull divergence:** relay justcode's recommendation (rebase or merge) and the reason, and let the user choose.
 - **tlog:** times are local; show the resulting day total from the dry run.
 - **ticket:** dry run resolves every field; show it before creating anything.
+- **standup:** ask for blockers (or none) in one turn, run `standup -n`, show the message and its targets; send with `standup` only after a go for that message.
+- **tcheck --fill:** run `tcheck --fill -n`, show the proposals as a table (day, range, ticket, commits); after an explicit go, `tcheck --fill -y`. If the real run's list would differ from the one approved (new commits or entries), show it again and ask again.
+- **release-notes:** `release-notes -n <from> [to]`, show the markdown; writing a file (`-o`) and sending to `RELEASE_NOTES_POST_TO` need a go.
+- **nudge:** run `nudge -n`, show the exact message, the reviewers and the target; send with `nudge -y` only after an explicit go for that message. Never nudge on the user's behalf unasked.
 - **Read-only lookups** (ticket status, sprint names, field values) may use connected Claude connectors. **Writes always go through the justcode commands.**
 - Reply in the user's language; justcode's own output stays English.
 

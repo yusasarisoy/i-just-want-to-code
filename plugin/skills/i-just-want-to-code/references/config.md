@@ -10,6 +10,8 @@ Config files are zsh source. Layers, later wins:
 
 `<repo>` is the git top level of the current directory, else `REPO_DIR`.
 
+**Templates are yours.** Every message and line template is a key: read it with `justcode config`, change it with `justcode edit`. A template you never set keeps the default shown here; for the standup, release-notes, nudge and tcheck --fill templates, a template set to empty leaves that part out (an empty line template drops those lines, an empty message sends nothing). `SHIP_MESSAGE`, `BUILD_MESSAGE` and `TICKET_MESSAGE` fall back to their default when empty; turn their message off with `<CMD>_POST_TO=none`.
+
 Columns: **wizard** is the `justcode setup` section that asks the key (`-` = edit by hand). **personal** keys are never allowed in the team layer; the wizard moves them to the global file with a warning. The last column is also the one-line help that `?` prints in the wizard, so keep it on one line.
 
 ## General
@@ -25,15 +27,16 @@ Columns: **wizard** is the `justcode setup` section that asks the key (`-` = edi
 | `NETWORK_WAIT_SECS` | int | `120` | - | | all network commands | Longest wait for a VPN-only host before the command stops |
 | `JUSTCODE_COMMANDS` | array | all built-ins | commands | | setup, Claude | Commands you use; a record for setup and Claude, every command stays installed |
 | `GIT_REMOTE` | string | `origin` | - | | ship, tpull | Remote used for the code host and for pushing |
+| `COMMIT_AUTHOR` | string | empty | - | yes | standup, tcheck | Author whose commits count as yours (git --author, fixed string); empty means git user.email |
 
 ## Per command
 
-`<CMD>` is `SHIP TPULL TLOG TCHECK TICKET BUILD`, or a custom command name upper-cased with `-` turned into `_` (`deploy-preview` becomes `DEPLOY_PREVIEW`).
+`<CMD>` is `SHIP TPULL TLOG TCHECK TICKET BUILD STANDUP RELEASE_NOTES NUDGE`, or a custom command name upper-cased with `-` turned into `_` (`deploy-preview` becomes `DEPLOY_PREVIEW`).
 
 | key | type | default | wizard | personal | read by | description |
 |---|---|---|---|---|---|---|
 | `<CMD>_DEFAULT_ARGS` | array | `()` | - | | that command | Arguments put in front of every call, e.g. SHIP_DEFAULT_ARGS=(-a) |
-| `<CMD>_SKIP` | array | `()` | - | | that command | Step names to skip; ship steps are description reviewers ci ticket time |
+| `<CMD>_SKIP` | array | `()` | - | | that command | Steps to skip: ship description reviewers ci ticket time; standup time commits prs today; release-notes prs tickets |
 | `<CMD>_PRE_HOOK` | string | empty | - | | that command | Runs with zsh -c in the repo root before any write; a failure stops the command |
 | `<CMD>_POST_HOOK` | string | empty | - | | that command | Runs with zsh -c in the repo root after success |
 
@@ -97,7 +100,17 @@ Hooks are read only from files you trusted; `JUSTCODE_SET` refuses them.
 | `SHIP_TIME_TYPE` | string | `code` | - | | ship | Type of the time log ship writes |
 | `TLOG_DEFAULT_COMMENT` | string | `Development` | - | | tlog, ship | Worklog comment when none is given |
 | `TLOG_DAY_FULL_HOOK` | string | empty | - | | tlog | Runs once when the day reaches DAY_TARGET_HOURS |
-| `DAY_LABELS` | array | `(Mon Tue Wed Thu Fri Sat Sun)` | - | | tcheck | Day names in the weekly report |
+| `DAY_LABELS` | array | `(Mon Tue Wed Thu Fri Sat Sun)` | - | | tcheck, standup | Day names in the weekly report and as {label} |
+| `TCHECK_FILL_REPOS` | array of paths | `()` | - | | tcheck --fill | Repositories whose commits fill short days; empty means the current repository |
+| `TCHECK_FILL_KEY_FROM` | array | `(branch subject)` | - | | tcheck --fill | Where a commit's ticket key comes from, first match wins: branch (the branch it was made on), subject |
+| `TCHECK_FILL_LEAD_MINUTES` | int | `60` | - | | tcheck --fill | Work counted before the first commit of a session |
+| `TCHECK_FILL_GAP_MINUTES` | int | `120` | - | | tcheck --fill | A longer pause between two commits of one ticket starts a new session |
+| `TCHECK_FILL_ROUND_MINUTES` | int | `30` | - | | tcheck --fill | Session start is rounded down and end rounded up to this step |
+| `TCHECK_FILL_MIN_MINUTES` | int | `30` | - | | tcheck --fill | Shorter proposals are dropped |
+| `TCHECK_FILL_TODAY` | 0/1 | `0` | - | | tcheck --fill | 1 also proposes entries for today |
+| `TCHECK_FILL_TYPE` | string | empty | - | | tcheck --fill | Type of the logged entries; empty means TLOG_DEFAULT_TYPE |
+| `TCHECK_FILL_COMMENT` | string | empty | - | | tcheck --fill | Comment of the logged entries; empty means TLOG_DEFAULT_COMMENT |
+| `TCHECK_FILL_LINE` | template | `{label} {start}-{end} → {key} ({commits} commits)` | - | | tcheck --fill | One line per proposal; placeholders label day start end key commits duration |
 
 ## Build
 
@@ -147,6 +160,49 @@ Hooks are read only from files you trusted; `JUSTCODE_SET` refuses them.
 | `TEAMS_WEBHOOK_SECRET` | secret name | `justcode-teams-webhook` | messages | yes | posts | Secret-store entry with the Teams webhook URL |
 | `WEBHOOK_SECRET` | secret name | `justcode-webhook` | messages | yes | posts | Secret-store entry with a generic webhook URL |
 | `TEAMS_PAYLOAD` | enum | `text` | messages | | posts | text or adaptive-card |
+
+## Standup
+
+| key | type | default | wizard | personal | read by | description |
+|---|---|---|---|---|---|---|
+| `STANDUP_DAY` | string | `yesterday` | - | | standup | Day reported without -d: yesterday, last-workday (by WORK_DAYS), today or a date |
+| `STANDUP_REPOS` | array of paths | `()` | - | | standup | Repositories for commits and pull requests; empty means the current repository |
+| `STANDUP_TODAY_STATUSES` | array | `('In Progress')` | - | | standup | Statuses of your tickets that fill the Today part |
+| `STANDUP_MESSAGE` | template | `Yesterday {yesterday} Today {today} Blockers {blockers}`, one per line | - | | standup | The whole message; placeholders day label yesterday today blockers |
+| `STANDUP_TIME_LINE` | template | `- {key} {title} ({duration})` | - | | standup | One line per ticket with time that day; placeholders key title duration secs entries comment url type |
+| `STANDUP_PR_LINE` | template | `- {action} {title} {url}` | - | | standup | One line per pull request; placeholders action id title url repo draft |
+| `STANDUP_PR_OPENED` | string | `opened` | - | | standup | {action} of a pull request created that day |
+| `STANDUP_PR_UPDATED` | string | `updated` | - | | standup | {action} of an older pull request updated that day |
+| `STANDUP_COMMIT_LINE` | template | `- {subject}` | - | | standup | One line per commit (same subjects once); placeholders subject sha repo |
+| `STANDUP_TODAY_LINE` | template | `- {key} {title}` | - | | standup | One line per ticket in STANDUP_TODAY_STATUSES; placeholders key title url |
+| `STANDUP_BLOCKER_LINE` | template | `- {text}` | - | | standup | One line per -b; placeholder text |
+| `STANDUP_NONE` | string | `none` | - | | standup | Text of a part with nothing in it |
+| `STANDUP_POST_TO` | list | `clipboard` | - | | standup | Comma list of clipboard, slack, teams, webhook or none |
+
+## Release notes
+
+| key | type | default | wizard | personal | read by | description |
+|---|---|---|---|---|---|---|
+| `RELEASE_NOTES_GROUPS` | array of pairs | `(Features 'Story,Feature' Fixes 'Bug' Other '*')` | - | | release-notes | Group name and comma list of ticket type globs, in output order; first match wins |
+| `RELEASE_NOTES_NO_TICKET_GROUP` | string | `Other` | - | | release-notes | Group of commits without a ticket and of types no group matches |
+| `RELEASE_NOTES_PR_LOOKUP` | 0/1 | `1` | - | | release-notes | Ask the code host for the pull request of each commit that names no ticket |
+| `RELEASE_NOTES_HEADER` | template | `## {to} ({date})` | - | | release-notes | First line of the notes; placeholders from to date |
+| `RELEASE_NOTES_GROUP_HEADER` | template | `### {group}` | - | | release-notes | Heading of each group; placeholders group from to date |
+| `RELEASE_NOTES_TICKET_LINE` | template | `- {key} {title}` | - | | release-notes | One line per ticket; placeholders key title type status url commits sha |
+| `RELEASE_NOTES_COMMIT_LINE` | template | `- {subject} ({sha})` | - | | release-notes | One line per commit without a ticket; placeholders subject sha full_sha |
+| `RELEASE_NOTES_POST_TO` | list | `clipboard` | - | | release-notes | Comma list of clipboard, slack, teams, webhook or none |
+
+## Nudge
+
+| key | type | default | wizard | personal | read by | description |
+|---|---|---|---|---|---|---|
+| `NUDGE_AFTER_HOURS` | number | `24` | - | | nudge | A reviewer is nudged once a review has waited this many hours |
+| `NUDGE_REPEAT_HOURS` | number | empty | - | | nudge | Optional quiet period: skip a reviewer nudged about the same pull request within this many hours; empty means off |
+| `NUDGE_MESSAGE` | template | `{mentions} these pull requests are waiting for your review:` then `{items}` | - | | nudge | The one message; placeholders mentions items count |
+| `NUDGE_LINE` | template | `- {title} {url} ({reviewers}, waiting {age})` | - | | nudge | One line per pull request; placeholders id title url reviewers age |
+| `NUDGE_MENTION` | template | `@{user}` | - | | nudge | How a reviewer is named; placeholders user name |
+| `NUDGE_MENTIONS` | map | `()` | - | | nudge | Code host user to chat handle, e.g. (bob '<@U123>'); wins over NUDGE_MENTION |
+| `NUDGE_POST_TO` | list | `clipboard` | - | | nudge | Comma list of clipboard, slack, teams, webhook or none |
 
 ## Custom commands
 

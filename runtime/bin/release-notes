@@ -1,0 +1,138 @@
+#!/usr/bin/env zsh
+# release-notes: markdown notes between two refs, grouped by ticket type.
+DF_ROOT=${0:A:h:h}; DF_CMD=release-notes
+source $DF_ROOT/lib/justcode-lib.zsh || exit 1
+source $DF_LIB/reports.zsh
+
+usage() {
+  print -r -- "usage: release-notes [-n] [-o file] <from-ref> [to-ref]
+  collects ticket keys from the commits in from..to (default to: HEAD) and from
+  their pull requests, reads title and type from the tracker and groups them by
+  RELEASE_NOTES_GROUPS; commits without a ticket go to $RELEASE_NOTES_NO_TICKET_GROUP
+  -o  write the markdown to <file> (default: stdout)
+  -n  dry run: print the notes, write and send nothing
+  steps (RELEASE_NOTES_SKIP): prs tickets"
+}
+
+set -- "${RELEASE_NOTES_DEFAULT_ARGS[@]}" "$@"
+outfile=''
+while getopts ':o:nh' o; do
+  case $o in
+    o) outfile=$OPTARG ;; n) DF_DRY=1 ;;
+    h) usage; exit 0 ;;
+    :) df_die "-$OPTARG needs a value (release-notes -h)" ;;
+    *) df_die "unknown option -$OPTARG (release-notes -h)" ;;
+  esac
+done
+shift $(( OPTIND - 1 ))
+(( $# >= 1 && $# <= 2 )) || { usage >&2; exit 1 }
+from=$1 to=${2:-HEAD}
+git rev-parse --git-dir >/dev/null 2>&1 || df_die "not inside a git repository"
+for r in $from $to; do git rev-parse -q --verify "$r^{commit}" >/dev/null || df_die "unknown ref '$r'"; done
+
+typeset -i tracker_on=0 prs_on=0
+[[ $TRACKER_PROVIDER != none ]] && ! df_step_off tickets && tracker_on=1
+(( RELEASE_NOTES_PR_LOOKUP )) && ! df_step_off prs && prs_on=1
+if (( tracker_on )); then df_use tracker; df_wait_for_host "$TRACKER_URL" || df_finish; fi
+if (( prs_on )); then
+  df_use code
+  if df_repo_path >/dev/null; then df_wait_for_host "${CODE_API_URL:-https://$(df_remote_host)}" || df_finish
+  else prs_on=0; df_skip "pull requests: no code host remote ($GIT_REMOTE)"
+  fi
+fi
+df_hook PRE
+
+# ---- commits: "<sha>\x1f<subject>\x1f<parents>\x1f<body>" records
+typeset -A keys_of subject_of merge_of
+shas=()
+raw=$(git log --reverse --format=$'%H\x1f%s\x1f%P\x1f%b\x1e' "$from..$to") || df_die "cannot read $from..$to"
+for rec in "${(@ps:\x1e:)raw}"; do
+  rec=${rec##$'\n'}
+  [[ -n $rec ]] || continue
+  f=("${(@ps:\x1f:)rec}")
+  sha=$f[1]
+  shas+=($sha)
+  subject_of[$sha]=$f[2]
+  keys_of[$sha]=${(j: :)${(f)"$(df_rn_keys "$f[2] $f[4]")"}}
+  [[ $f[3] == *' '* ]] && merge_of[$sha]=1  # more than one parent
+done
+df_ok "range $from..$to: ${#shas} commit$( (( ${#shas} == 1 )) || print -n s)"
+
+# ---- pull requests of the commits that name no ticket
+if (( prs_on )); then
+  typeset -A seen_pr
+  rc=0
+  for sha in $shas; do
+    [[ -z ${keys_of[$sha]// /} ]] || continue
+    out=$(code_prs_for_commit $sha 2>/dev/null); rc=$?
+    (( rc == 3 )) && break
+    (( rc )) && { df_fail "pull requests: cannot read the pull requests of ${sha[1,7]} ($(df_last_error))"; break }
+    for pr in ${(f)"$(jq -c '.[]' <<<${out:-[]})"}; do
+      seen_pr[$(jq -r .id <<<$pr)]=1
+      k=(${(f)"$(df_rn_keys "$(jq -r '"\(.branch) \(.title)"' <<<$pr)")"})
+      (( ${#k} )) && keys_of[$sha]=${(j: :)k}
+    done
+  done
+  if (( rc == 3 )); then df_skip "pull requests: not supported by $CODE_PROVIDER"
+  elif (( rc == 0 )); then df_ok "pull requests: ${#seen_pr} found for the commits without a ticket key"
+  fi
+fi
+
+# ---- tickets
+keys=()
+for sha in $shas; do for k in ${=keys_of[$sha]}; do df_in_list $k $keys || keys+=($k); done; done
+typeset -A issue_of
+if (( ! tracker_on )); then
+  df_skip "tickets: $([[ $TRACKER_PROVIDER == none ]] && print 'no tracker configured' || print skipped); ${#keys} key(s) listed with their commit subject"
+else
+  typeset -i read_ok=0
+  missing=()
+  for k in $keys; do
+    if out=$(tracker_issue $k 2>/dev/null) && [[ -n $out ]]; then issue_of[$k]=$out; (( read_ok++ ))
+    else missing+=($k)
+    fi
+  done
+  df_ok "tickets: $read_ok read from $TRACKER_PROVIDER"
+  (( ${#missing} )) && df_skip "tickets: ${(j:, :)missing} not found; listed with their commit subject"
+fi
+
+# ---- items -> markdown
+items='[]'
+for k in $keys; do
+  first='' n=0
+  for sha in $shas; do
+    df_in_list $k ${=keys_of[$sha]} || continue
+    (( n++ )); first=${first:-$sha}
+  done
+  issue=${issue_of[$k]:-$(jq -nc --arg k $k --arg t "${subject_of[$first]}" '{key:$k, title:$t, type:"", status:"", url:""}')}
+  [[ -z $(jq -r .url <<<$issue) ]] && (( tracker_on )) && issue=$(jq -c --arg u "$(tracker_url $k 2>/dev/null)" '.url = $u' <<<$issue)
+  group=$(df_rn_group "$(jq -r .type <<<$issue)")
+  row=$(jq -c --argjson n $n --arg s ${first[1,7]} '. + {commits:$n, sha:$s}' <<<$issue)
+  line=$(df_rpt_lines "$RELEASE_NOTES_TICKET_LINE" "[$row]")
+  [[ -n $line ]] && items=$(jq -c --arg g "$group" --arg l "$line" '. + [{group:$g, line:$l}]' <<<$items)
+done
+for sha in $shas; do
+  [[ -z ${keys_of[$sha]// /} ]] || continue
+  (( ${+merge_of[$sha]} )) && continue  # a merge commit without a ticket says nothing new
+  row=$(jq -nc --arg s "${subject_of[$sha]}" --arg h ${sha[1,7]} --arg H $sha '{subject:$s, sha:$h, full_sha:$H}')
+  line=$(df_rpt_lines "$RELEASE_NOTES_COMMIT_LINE" "[$row]")
+  [[ -n $line ]] && items=$(jq -c --arg g "$RELEASE_NOTES_NO_TICKET_GROUP" --arg l "$line" '. + [{group:$g, line:$l}]' <<<$items)
+done
+notes=$(df_rn_render "$from" "$to" "$items")
+
+# ---- output and message
+if [[ -n $outfile ]]; then
+  if (( DF_DRY )); then df_dry "write $outfile"; print -r -- "$notes"
+  elif print -r -- "$notes" >|$outfile; then df_ok "wrote $outfile"
+  else df_fail "cannot write $outfile"
+  fi
+else
+  print -r -- "$notes"
+fi
+if [[ -z ${notes//[[:space:]]/} ]]; then df_skip "message: the notes are empty; nothing to send"
+elif (( DF_FAILED )); then df_skip "message not sent: a step failed"
+else df_post "$RELEASE_NOTES_POST_TO" "$notes"
+fi
+
+df_hook POST
+df_finish

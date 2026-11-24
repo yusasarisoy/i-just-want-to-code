@@ -58,6 +58,34 @@ code_add_reviewers() {
 code_auto_merge() { df_unsupported auto-merge bitbucket }
 code_ci_nudge() { df_unsupported "CI nudge" bitbucket }
 
+_bb_ep='def ep: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;'
+
+code_list_my_prs() {
+  local q="author.nickname=\"$CODE_USER\" AND updated_on >= $(df_iso_utc $1) AND updated_on < $(df_iso_utc $2)"
+  _bb GET "/repositories/$(code_repo_path)/pullrequests?q=$(df_urlencode $q)&state=OPEN&state=MERGED&state=DECLINED&pagelen=50" || return 1
+  jq -c "$_bb_ep"' [.values[] | {id, url:.links.html.href, title, draft:(.draft // false),
+    created:(.created_on|ep), updated:(.updated_on|ep)}]' <<<$DF_HTTP_BODY
+}
+
+# Bitbucket keeps no request time per reviewer: "since" is when the PR was opened.
+code_pending_reviews() {
+  local q="author.nickname=\"$CODE_USER\" AND state=\"OPEN\"" ids id out='[]'
+  _bb GET "/repositories/$(code_repo_path)/pullrequests?q=$(df_urlencode $q)&pagelen=50" || return 1
+  ids=(${(f)"$(jq -r '.values[].id' <<<$DF_HTTP_BODY)"})
+  for id in $ids; do
+    _bb GET "/repositories/$(code_repo_path)/pullrequests/$id" || return 1
+    out=$(jq -c --argjson pr "$DF_HTTP_BODY" "$_bb_ep"' . + [$pr | (.created_on|ep) as $c | {id, url:.links.html.href, title,
+      draft:(.draft // false), created:$c, reviewers:[.participants[]? | select(.role == "REVIEWER" and (.approved | not) and .state == null)
+        | {user:(.user.nickname // .user.account_id), name:(.user.display_name // .user.nickname), since:$c}]}]' <<<$out) || return 1
+  done
+  print -r -- $out
+}
+
+code_prs_for_commit() {
+  _bb GET "/repositories/$(code_repo_path)/commit/$1/pullrequests" || return 1
+  jq -c '[.values[] | {id, url:.links.html.href, title, branch:.source.branch.name}]' <<<$DF_HTTP_BODY
+}
+
 code_doctor() {
   local who
   who=$(code_whoami) || { df_fail "bitbucket: cannot read the token owner ($DF_HTTP_ERR)"; return 1 }

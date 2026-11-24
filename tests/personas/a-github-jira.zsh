@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 # Persona A: GitHub, Jira Cloud, no time tracker, TestFlight, no VPN, Slack.
 source ${0:A:h}/../lib/env.zsh
+zmodload zsh/datetime
 p_init
 p_repo https://github.com/alice/myapp.git feature/ABC-123-login
 p_secret justcode-code-token fake-secret-code-a
@@ -132,6 +133,118 @@ p_run justcode doctor
 t_eq "doctor passes" $RC 0
 p_run justcode config
 t_has "config shows the tracker" "$OUT" "TRACKER_PROVIDER             jira-cloud"
+
+print "standup"
+p_secret justcode-time-token fake-secret-tempo-a
+tempo="TIME_PROVIDER=tempo-cloud;TIME_URL=$MOCK/tempo;TIME_USER=acc-alice;STANDUP_POST_TO=slack"
+yday=$(strftime %Y-%m-%d $(( EPOCHSECONDS - 24 * 3600 )))
+GIT_AUTHOR_DATE="$yday 10:00" GIT_COMMITTER_DATE="$yday 10:00" git commit -q --allow-empty -m "Validate the password"
+p_mark; p_run env JUSTCODE_SET="$tempo" standup -n -d $yday -b "Waiting for the API keys"
+t_eq "standup -n exits 0" $RC 0
+t_eq "standup -n sends no writes" "$(p_writes)" ""
+t_has "standup: time log with the ticket title" "$OUT" "- ABC-123 Login (1h)"
+t_has "standup: a pull request opened that day" "$OUT" "- opened Add login screen https://git.example.com/alice/myapp/pull/7"
+t_has "standup: a pull request updated that day" "$OUT" "- updated Fix the crash on start"
+t_has "standup: the day's commit" "$OUT" "- Validate the password"
+t_lacks "standup: today's commit is not yesterday's" "$OUT" "- Add login screen"$'\n'
+t_has "standup: today from In Progress tickets" "$OUT" $'Today\n- ABC-123 Login\n- ABC-124 Crash on start'
+t_has "standup: the blocker" "$OUT" $'Blockers\n- Waiting for the API keys'
+t_has "standup -n plans the post" "$OUT" "[dry-run] post to slack: Yesterday"
+p_run env JUSTCODE_SET="$tempo;STANDUP_COMMIT_LINE=;STANDUP_SKIP=today" standup -n -d $yday
+t_lacks "an emptied template leaves its lines out" "$OUT" "Validate the password"
+t_has "a skipped step is a skip line" "$OUT" "• today: skipped"
+t_has "no blockers: the none text" "$OUT" $'Blockers\nnone'
+p_run standup -n -d 2026-02-30
+t_eq "standup: impossible day stops" $RC 1
+p_mark; p_run env JUSTCODE_SET="$tempo" standup -d $yday -b "Waiting for the API keys"
+t_eq "real standup exits 0" $RC 0
+t_eq "real standup only posts" "$(p_writes)" "POST /hooks/slack"
+t_has "the post carries the message" "$(grep '^POST /hooks/slack' $SHIM_STATE/requests.log | tail -1)" "Waiting for the API keys"
+
+print "tcheck --fill"
+now=$(strftime -r '%Y-%m-%d %H:%M' '2026-11-18 12:00')
+for t in 10:05 10:40 11:20 11:50; do
+  GIT_AUTHOR_DATE="2026-11-17 $t" GIT_COMMITTER_DATE="2026-11-17 $t" git commit -q --allow-empty -m "Login step $t"
+done
+fill="TIME_PROVIDER=tempo-cloud;TIME_URL=$MOCK/tempo;TIME_USER=acc-alice"
+p_mark; p_run env JUSTCODE_NOW=$now JUSTCODE_SET="$fill" tcheck --fill -n
+t_eq "tcheck --fill -n exits 0" $RC 0
+t_eq "tcheck --fill -n sends no writes" "$(p_writes)" ""
+t_has "the short day is still reported" "$OUT" "✗ Tue 2026-11-17 0m, 8h short"
+t_has "proposal from the branch's commits" "$OUT" "Tue 10:00-12:00 → ABC-123 (4 commits)"
+t_has "a day without commits is a skip" "$OUT" "• fill: Mon 2026-11-16 has no commits with a ticket key"
+t_has "dry run shows the tlog call" "$OUT" "[dry-run] tlog -t code ABC-123 10:00-12:00 2026-11-17 Development"
+t_lacks "never proposes the logged 09:00-10:00" "$OUT" "09:00-"
+p_mark; p_run env JUSTCODE_NOW=$now JUSTCODE_SET="$fill" tcheck --fill
+t_has "without -y and a terminal nothing is logged" "$OUT" "• fill: not confirmed; nothing logged (run again with -y to log them)"
+t_eq "unconfirmed fill sends no writes" "$(p_writes)" ""
+p_mark; p_run env JUSTCODE_NOW=$now JUSTCODE_SET="$fill" tcheck --fill -y
+t_eq "tcheck --fill -y exits 0" $RC 0
+t_has "logged through tlog" "$OUT" "✓ logged 2h on ABC-123, 2026-11-17 10:00 (code)"
+t_eq "one worklog written" "$(p_writes)" "POST /tempo/4/worklogs"
+p_run env JUSTCODE_SET="$fill" tlog -n ABC-123 9:30-10:30
+t_eq "tlog refuses an overlapping new entry" $RC 1
+t_has "tlog names the overlap" "$OUT" "9:30-10:30 would overlap ABC-123 at 09:00"
+
+print "release-notes"
+git tag v0.1.0
+git commit -q --allow-empty -m "ABC-124 fix the crash on start"
+git commit -q --allow-empty -m "Polish the login form" -m "Refs ABC-123"
+git commit -q --allow-empty -m "Bump the version"
+git tag v0.2.0
+p_mark; p_run release-notes -n v0.1.0 v0.2.0
+t_eq "release-notes -n exits 0" $RC 0
+t_eq "release-notes -n sends no writes" "$(p_writes)" ""
+t_has "keys from subject and body, grouped by type" "$OUT" $'### Features\n- ABC-123 Login\n\n### Fixes\n- ABC-124 Crash on start'
+t_has "a commit without a ticket goes to Other" "$OUT" $'### Other\n- Bump the version ('
+t_has "the header names the release" "$OUT" "## v0.2.0 ("
+t_has "release-notes -n plans the post" "$OUT" "[dry-run] post to clipboard: ## v0.2.0"
+p_fail commit-prs
+p_run release-notes -n v0.1.0 v0.2.0
+t_has "a pull request's branch gives the ticket" "$OUT" $'### Other\n- ABC-125 Update the docs'
+t_lacks "that commit is no longer ticketless" "$OUT" "Bump the version"
+p_fail ''
+p_run env JUSTCODE_SET='RELEASE_NOTES_TICKET_LINE=- [{key}]({url}) {title} ({type})' release-notes -n v0.1.0 v0.2.0
+t_has "the line template is the user's" "$OUT" "- [ABC-124]($MOCK/jira-cloud/browse/ABC-124) Crash on start (Bug)"
+p_run release-notes -n v0.2.0 v0.1.0
+t_has "an empty range says so" "$OUT" "• message: the notes are empty"
+p_run release-notes -n v9.9.9
+t_eq "unknown ref stops" $RC 1
+p_mark; p_run env JUSTCODE_SET='RELEASE_NOTES_POST_TO=slack' release-notes -o $T/notes.md v0.1.0 v0.2.0
+t_eq "release-notes -o exits 0" $RC 0
+t_has "notes written to the file" "$(<$T/notes.md)" "- ABC-124 Crash on start"
+t_has "the file is markdown" "$(<$T/notes.md)" "### Fixes"
+t_eq "release-notes only posts" "$(p_writes)" "POST /hooks/slack"
+p_run release-notes -o $T/notes.md v0.1.0 v0.2.0
+t_eq "a second run overwrites the same file" "$(grep -c 'ABC-124' $T/notes.md)" 1
+
+print "nudge"
+p_mark; p_run env JUSTCODE_SET='NUDGE_POST_TO=slack' nudge -n
+t_eq "nudge -n exits 0" $RC 0
+t_eq "nudge -n sends no writes" "$(p_writes)" ""
+t_has "drafts are counted and skipped" "$OUT" "✓ open pull requests: 2 (1 draft skipped)"
+t_has "only reviewers past 24h" "$OUT" "✓ waiting 24h or more: 1 pull request(s), reviewers bob"
+t_has "one message, shown first" "$OUT" $'@bob these pull requests are waiting for your review:\n- Pull request 7 https://git.example.com/alice/myapp/pull/7 (@bob, waiting 1d 6h)'
+t_lacks "a reviewer asked 2h ago is not nudged" "$OUT" "@carol"
+t_lacks "a draft is never in the message" "$OUT" "Pull request 8"
+t_lacks "someone else's pull request is left alone" "$OUT" "Pull request 9"
+t_has "nudge -n plans the post" "$OUT" "[dry-run] post to slack: @bob"
+p_mark; p_run env JUSTCODE_SET='NUDGE_POST_TO=slack' nudge
+t_has "without -y and a terminal nothing is sent" "$OUT" "• not confirmed; nothing sent (run again with -y to send it)"
+t_eq "unconfirmed nudge sends no writes" "$(p_writes)" ""
+p_run env JUSTCODE_SET='NUDGE_POST_TO=slack;NUDGE_AFTER_HOURS=1' nudge -n
+t_has "the limit is the user's" "$OUT" "reviewers bob, carol"
+p_mark; p_run env JUSTCODE_SET='NUDGE_POST_TO=slack' nudge -y
+t_eq "nudge -y exits 0" $RC 0
+t_eq "nudge -y only posts" "$(p_writes)" "POST /hooks/slack"
+p_mark; p_run env JUSTCODE_SET='NUDGE_POST_TO=slack' nudge -y
+t_eq "a second nudge is sent again by default" "$(p_writes)" "POST /hooks/slack"
+p_run env JUSTCODE_SET='NUDGE_POST_TO=slack;NUDGE_REPEAT_HOURS=12' nudge -y
+p_mark; p_run env JUSTCODE_SET='NUDGE_POST_TO=slack;NUDGE_REPEAT_HOURS=12' nudge -y
+t_has "an opted-in quiet period skips the reviewer" "$OUT" "• bob on #7 was nudged"
+t_eq "quiet period: nothing sent" "$(p_writes)" ""
+p_run env JUSTCODE_SET='CODE_USER=bob' nudge -n
+t_eq "token of another account: nudge refuses" $RC 1
 
 print "secrets"
 t_lacks "no secret value in any curl argv" "$(<$SHIM_STATE/curl.argv)" fake-secret

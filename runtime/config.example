@@ -14,8 +14,9 @@
 # NETWORK_WAIT_SECS=120                    # longest wait for a VPN host
 # JUSTCODE_COMMANDS=(ship tpull tlog tcheck ticket build vpn)
 # GIT_REMOTE=origin
+# COMMIT_AUTHOR=''                         # [personal] your commits for standup / tcheck --fill; empty = git user.email
 
-# ---- per command: SHIP TPULL TLOG TCHECK TICKET BUILD (and custom commands)
+# ---- per command: SHIP TPULL TLOG TCHECK TICKET BUILD STANDUP RELEASE_NOTES NUDGE (and custom commands)
 # SHIP_DEFAULT_ARGS=(-a)                   # prepended to every call
 # SHIP_SKIP=(reviewers)                    # steps: description reviewers ci ticket time
 # SHIP_PRE_HOOK='make lint'                # runs with zsh -c in the repo root
@@ -72,6 +73,16 @@
 # TLOG_DEFAULT_COMMENT='Development'
 # TLOG_DAY_FULL_HOOK=''                    # runs when the day reaches DAY_TARGET_HOURS
 # DAY_LABELS=(Mon Tue Wed Thu Fri Sat Sun)
+# TCHECK_FILL_REPOS=()                     # tcheck --fill: repos to read commits from; empty = current
+# TCHECK_FILL_KEY_FROM=(branch subject)    # where a commit's ticket key comes from, first match wins
+# TCHECK_FILL_LEAD_MINUTES=60              # work counted before a session's first commit
+# TCHECK_FILL_GAP_MINUTES=120              # a longer pause starts a new session
+# TCHECK_FILL_ROUND_MINUTES=30
+# TCHECK_FILL_MIN_MINUTES=30
+# TCHECK_FILL_TODAY=0                      # 1 = propose for today too
+# TCHECK_FILL_TYPE=''                      # empty = TLOG_DEFAULT_TYPE
+# TCHECK_FILL_COMMENT=''                   # empty = TLOG_DEFAULT_COMMENT
+# TCHECK_FILL_LINE='{label} {start}-{end} → {key} ({commits} commits)'
 
 # ---- build
 # DEPLOY_PROVIDER=none                     # testflight | play | command | none
@@ -109,3 +120,37 @@
 # TEAMS_WEBHOOK_SECRET=justcode-teams-webhook   # [personal]
 # WEBHOOK_SECRET=justcode-webhook               # [personal]
 # TEAMS_PAYLOAD=text                       # text | adaptive-card
+
+# ---- standup (templates: unset = default, empty = leave that part out)
+# STANDUP_DAY=yesterday                    # yesterday | last-workday | today | YYYY-MM-DD
+# STANDUP_REPOS=()                         # empty = current repo
+# STANDUP_TODAY_STATUSES=('In Progress')
+# STANDUP_MESSAGE=$'Yesterday\n{yesterday}\nToday\n{today}\nBlockers\n{blockers}'
+# STANDUP_TIME_LINE='- {key} {title} ({duration})'
+# STANDUP_PR_LINE='- {action} {title} {url}'
+# STANDUP_PR_OPENED=opened
+# STANDUP_PR_UPDATED=updated
+# STANDUP_COMMIT_LINE='- {subject}'
+# STANDUP_TODAY_LINE='- {key} {title}'
+# STANDUP_BLOCKER_LINE='- {text}'
+# STANDUP_NONE=none
+# STANDUP_POST_TO=clipboard
+
+# ---- release notes
+# RELEASE_NOTES_GROUPS=(Features 'Story,Feature' Fixes 'Bug' Other '*')   # name, type globs; first match wins
+# RELEASE_NOTES_NO_TICKET_GROUP=Other
+# RELEASE_NOTES_PR_LOOKUP=1                # ask the code host for the PR of ticketless commits
+# RELEASE_NOTES_HEADER='## {to} ({date})'
+# RELEASE_NOTES_GROUP_HEADER='### {group}'
+# RELEASE_NOTES_TICKET_LINE='- {key} {title}'
+# RELEASE_NOTES_COMMIT_LINE='- {subject} ({sha})'
+# RELEASE_NOTES_POST_TO=clipboard
+
+# ---- nudge
+# NUDGE_AFTER_HOURS=24
+# NUDGE_REPEAT_HOURS=''                    # opt-in quiet period per reviewer and PR; empty = off
+# NUDGE_MESSAGE=$'{mentions} these pull requests are waiting for your review:\n{items}'
+# NUDGE_LINE='- {title} {url} ({reviewers}, waiting {age})'
+# NUDGE_MENTION='@{user}'
+# typeset -A NUDGE_MENTIONS=( bob '<@U123>' )   # code host user -> chat handle
+# NUDGE_POST_TO=clipboard
