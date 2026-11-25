@@ -61,7 +61,7 @@ Find out without asking: OS and shell; `git remote get-url origin` → code host
 - Fixed-choice questions list the known providers plus `None / I don't use this`; the user can always type Other. A tool with no provider → §3.
 - Put the detected or recommended option first, labelled `(Recommended)`.
 - Message templates (ship, build, ticket), in round 3:
-  - offer 2–3 ready templates from `references/messages.md` (neutral wording, documented placeholders);
+  - offer 2 or 3 ready templates from `references/messages.md` (neutral wording, documented placeholders);
   - show a live preview filled with this user's real branch, PR title and ticket key;
   - ask the target as a **multi-select**: clipboard, Slack, Teams, webhook, none.
 - After the rounds, ask all free-text values **once, together** (URLs, account names, project keys, reviewers), each with the detected or guessed default.
