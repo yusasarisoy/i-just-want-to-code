@@ -75,7 +75,9 @@ while (my $file = <STDIN>) {
       next if $u eq "git" || $d =~ /^(?:[a-z0-9-]+\.)*example\.com$/i;
       hit($file, $n, "e-mail address: $u\@$d");
     }
-    while ($line =~ /(?<![0-9])([0-9]{5,})(?![0-9])/g) {
+    # sha256 checksums are hex, not data: their digit runs are not findings.
+    (my $nohash = $line) =~ s/\b[0-9a-f]{64}\b//gi;
+    while ($nohash =~ /(?<![0-9])([0-9]{5,})(?![0-9])/g) {
       my $r = $1;
       next if $r =~ /^(\d)\1+$/ || "1234567890" =~ /\Q$r\E/;
       hit($file, $n, "digit run: $r");
