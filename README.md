@@ -83,7 +83,7 @@ Two parts: the **plugin** (the skill that teaches Claude justcode) and the **run
 
 **Claude app:** from the plugin directory, once i-just-want-to-code is listed there.
 
-**2. Runtime.** Ask Claude to "set up justcode". It fetches the release that matches the plugin version into `~/.local/share/justcode-src`, shows what `install.sh -n` would do and installs only after you say yes. When the plugin updates, Claude offers the matching runtime update the same way.
+**2. Runtime.** Ask Claude to "set up justcode". It fetches the release that matches the plugin version into `~/.local/share/justcode-src`, checks it against the sha256 pinned in the plugin, shows what `install.sh -n` would do and installs only after you say yes. When the plugin updates, Claude offers the matching runtime update the same way.
 
 Without Claude: clone the repo, read `runtime/install.sh` if you like, then run it (`-n` first shows what it would do):
 
